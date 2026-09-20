@@ -40,6 +40,7 @@ aihf = "hedge_fund.run:main"
 hl-collect = "hedge_fund.hl.cli:main"
 hl-collect-fills = "hedge_fund.hl.fills_cli:main"
 nansen-snapshot = "hedge_fund.nansen.__main__:main"
+fomo-collect = "hedge_fund.fomo.cli:main"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"
