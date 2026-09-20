@@ -98,3 +98,53 @@ def test_audit_copy_round_trips_through_json():
     again = CycleRecord.model_validate_json(original.model_dump_json())
     assert again == original
     assert again.model_dump_json() == original.model_dump_json()
+
+
+@pytest.mark.parametrize("spec", [
+    pytest.param(
+        {**_SPEC, "risk": {**_SPEC["risk"], "sector_cap_pct": 0.3}},
+        id="risk",
+    ),
+    pytest.param(
+        {**_SPEC, "strategies": [
+            {"name": "value", "models": [{"name": "buffett"}], "max_names": 20},
+        ]},
+        id="strategy",
+    ),
+    pytest.param(
+        {**_SPEC, "strategies": [
+            {"name": "value", "models": [{"name": "buffett", "temperature": 0.1}]},
+        ]},
+        id="model",
+    ),
+    pytest.param(
+        {**_SPEC, "strategies": [{
+            "name": "value",
+            "models": [{"name": "buffett"}],
+            "blend": {"method": "conviction_weighted", "decay": 0.9},
+        }]},
+        id="blend",
+    ),
+])
+def test_unknown_field_nested_in_the_mandate_still_loads(spec):
+    """Tolerance has to reach all the way down, not just the mandate's root.
+
+    pydantic bakes `model_config` per class, so relaxing the outer model alone
+    leaves `risk` and every sleeve validating against the strict originals —
+    and an unknown key under any of them raises exactly the error the audit
+    copy exists to prevent. The tests above only ever added keys at the root,
+    which is how that gap survived them.
+    """
+    record = CycleRecord.model_validate_json(json.dumps(_record(spec=spec)))
+    assert record.spec.name == "test"
+
+
+def test_strict_spec_still_rejects_those_nested_keys():
+    """The asymmetry is the whole point: a YAML typo one level down must still
+    fail loud at load time, not be quietly kept."""
+    with pytest.raises(ValidationError):
+        FundSpec(**{**_SPEC, "risk": {**_SPEC["risk"], "sector_cap_pct": 0.3}})
+    with pytest.raises(ValidationError):
+        FundSpec(**{**_SPEC, "strategies": [
+            {"name": "value", "models": [{"name": "buffett", "temperature": 0.1}]},
+        ]})

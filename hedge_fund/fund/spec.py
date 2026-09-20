@@ -140,19 +140,61 @@ class FundSpec(BaseModel):
         return strategies
 
 
-class AuditFundSpec(FundSpec):
-    """The mandate as EMBEDDED IN A RECEIPT: same shape, but `extra='allow'`.
+# --- the mandate as a receipt embeds it -------------------------------------
+#
+# A mandate loaded from YAML must fail loud on a typo, so the models above
+# forbid extras. A receipt is the opposite problem: it was written by an older
+# build and can never be corrected, so a field this build has since dropped
+# (the legacy `universe` key `load_spec` already pops is the precedent) must
+# not make a fund's entire history unreadable.
+#
+# Relaxing the outer model alone does not do that. In pydantic v2 `model_config`
+# is baked into each class's own schema, so a subclass of FundSpec still
+# validates `strategies[i]` against the strict StrategySpec it inherited the
+# annotation for. An unknown key one level down — under `risk`, or on a model
+# in a sleeve — would raise exactly the ValidationError this is here to
+# prevent. Every nested model therefore needs its own tolerant copy, wired in
+# by re-declaring the field.
 
-    A mandate loaded from YAML must fail loud on a typo, so FundSpec forbids
-    extras. A receipt is the opposite problem: it was written by an older
-    build and can never be corrected, so a field this build has since dropped
-    (the legacy `universe` key `load_spec` already pops is the precedent) must
-    not make a fund's entire history unreadable. Unknown keys are kept on the
-    model rather than discarded, so the audit copy still says exactly what the
-    old mandate said.
+
+class AuditModelSpec(ModelSpec):
+    """A receipt's copy of one signal model: same shape, unknown keys kept."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class AuditBlendPolicy(BlendPolicy):
+    """A receipt's copy of a blend policy: same shape, unknown keys kept."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class AuditRiskLimits(RiskLimits):
+    """A receipt's copy of the risk limits: same shape, unknown keys kept."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class AuditStrategySpec(StrategySpec):
+    """A receipt's copy of a strategy, tolerant all the way down."""
+
+    model_config = ConfigDict(extra="allow")
+
+    models: list[AuditModelSpec] = Field(min_length=1)
+    blend: AuditBlendPolicy = Field(default_factory=AuditBlendPolicy)
+
+
+class AuditFundSpec(FundSpec):
+    """The mandate as EMBEDDED IN A RECEIPT: same shape, tolerant of extras.
+
+    Unknown keys are kept on the model rather than discarded, so the audit
+    copy still says exactly what the old mandate said, at every level.
     """
 
     model_config = ConfigDict(extra="allow")
+
+    strategies: list[AuditStrategySpec] = Field(min_length=1)
+    risk: AuditRiskLimits
 
 
 def normalize_universe(tickers: list[str]) -> list[str]:

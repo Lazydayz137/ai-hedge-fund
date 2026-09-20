@@ -283,3 +283,42 @@ def test_cash_reserve_floor_leaves_cash_in_the_book():
     # Floor-toward-zero sizing can only leave MORE cash than the target, never
     # less, so this is the binding direction.
     assert broker.cash() >= 0.10 * record.equity_before
+
+
+def test_the_book_carries_between_runs():
+    """The point of the ledger's read half: NAV continues, it does not reset.
+
+    Run once, save the receipt, resume from it, then run again with AAPL 10%
+    higher. The second cycle must open on the first one's book marked at the
+    new price — which is what makes NAV a track record rather than a number
+    that starts over at the mandate's capital every time.
+    """
+    from hedge_fund.ledger import latest_run, resume_broker, save_run
+
+    spec = _spec(max_position_pct=1.0)
+    fund = Fund(spec, models={"solo": [FakeAnalyst("a", views={"AAPL": 1.0})]})
+
+    first = run_cycle(fund, "2024-06-03", SimBroker(cash=100_000.0),
+                      FakeDataClient(CLOSES), UNIVERSE)
+    assert first.equity_before == pytest.approx(100_000.0)
+    assert first.positions["AAPL"] == 500      # 100k / $200, all-in
+    assert first.cash == pytest.approx(0.0)
+    save_run(first)
+
+    higher = {**CLOSES, "AAPL": 220.0}         # +10% overnight
+    resumed = resume_broker(latest_run(spec.name))
+    second = run_cycle(fund, "2024-06-04", resumed, FakeDataClient(higher),
+                       UNIVERSE)
+
+    # Opens on the carried book, marked at the new price — not at spec.capital.
+    assert second.cash_before == pytest.approx(first.cash)
+    assert second.equity_before == pytest.approx(110_000.0)
+    assert second.equity_before != pytest.approx(spec.capital)
+
+    # Basis is what was paid, not what it is now worth. Losing this is how a
+    # resumed book would report a 10% gain as flat.
+    assert second.cost_basis["AAPL"] == pytest.approx(200.0)
+
+    # Target is still the whole book, and it already holds it: nothing to do.
+    assert second.orders == []
+    assert second.positions == first.positions
