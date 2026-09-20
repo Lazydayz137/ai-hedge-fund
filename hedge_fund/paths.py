@@ -31,6 +31,14 @@ ENV_PATH = USER_DIR / ".env"
 # treat this the same way.
 ARCHIVE_DIR = USER_DIR / "archive"
 
+# The validation store: pre-registrations, the trial ledger, and the record of
+# every holdout reveal. An archive for the same reason the two above are, and
+# for a sharper one: a forgotten trial does not degrade a result, it improves
+# it. The Deflated Sharpe threshold rises with the trial count, so losing
+# trials is the one storage failure that makes a strategy look better than it
+# is, and it looks like nothing at all from the outside.
+VALIDATION_DIR = USER_DIR / "validation"
+
 # The example mandate ships inside the package; it is copied out (never read
 # in place) so users edit their copy, not the install.
 EXAMPLE_MANDATE = Path(__file__).resolve().parent / "fund" / "example.yaml"
