@@ -126,6 +126,13 @@ def collect(
     tidy destroys point-in-time history that nobody can rebuild. The failures
     come back in the result; the CLI exits non-zero on them.
     """
+    if max_pages < 1:
+        # Otherwise _fetch's loop never runs and the round writes a snapshot
+        # with no pages, marked partial — and the CLI exits 0, because
+        # nothing errored. An empty archive entry that reports success is
+        # worse than a failure: it looks like an answer.
+        raise ValueError(f"max_pages must be at least 1, got {max_pages}")
+
     started_at = datetime.now(timezone.utc)
     owned = client is None
     client = client or NansenClient()
@@ -160,8 +167,6 @@ def _fetch(
     max_pages: int,
 ) -> Snapshot:
     """Page *endpoint* until it says it is done, or until the cap says stop."""
-    # Taken before the first request, not after the last: see Snapshot.
-    observed_at = datetime.now(timezone.utc)
     pages: list[Any] = []
     complete = False
     note: str | None = None
@@ -193,7 +198,8 @@ def _fetch(
     return Snapshot(
         endpoint=endpoint,
         params=dict(params),
-        observed_at=observed_at,
+        # Stamped now, after the last page, not before the first: see Snapshot.
+        observed_at=datetime.now(timezone.utc),
         collector_version=COLLECTOR_VERSION,
         pages=pages,
         complete=complete,

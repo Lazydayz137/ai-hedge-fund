@@ -9,8 +9,10 @@ was observed and never let a simulated date see a list from its own future.
 
 Three rules carry that, and nothing else here matters:
 
-  * Snapshots are written with open(..., "x"). A snapshot that can be
-    overwritten is a snapshot that can be silently revised.
+  * A snapshot is serialized to a temporary file and only then published
+    under its final name, with a link that refuses to overwrite. A snapshot
+    that can be overwritten is one that can be silently revised, and one
+    published before it was finished is one that can be silently truncated.
   * read_as_of takes observed_at out of the record. Not the filename, which is
     a convenience for humans with `ls`, and not the mtime, which a copy, an
     rsync or a backup restore will happily rewrite.
@@ -24,6 +26,9 @@ job writes them, and neither may reach into a UI.
 
 from __future__ import annotations
 
+import os
+import tempfile
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -50,11 +55,16 @@ class CorruptSnapshot(ValueError):
 class Snapshot(BaseModel):
     """One observation of one endpoint.
 
-    ``observed_at`` is the machine clock in UTC at the moment the first
-    request went out, recorded here explicitly — never inferred from the
-    filename or the file's mtime. A paged fetch spans a little wall time, so
-    the start of the observation is the conservative end to record: an as-of
-    read can then never hand a simulated date something learned after it.
+    ``observed_at`` is the machine clock in UTC at the moment the LAST page
+    arrived, recorded here explicitly — never inferred from the filename or
+    the file's mtime.
+
+    The end of the fetch, not the start, and the direction matters. A paged
+    fetch spans wall time: page one lands at t0, the last at t1. Stamping t0
+    would make read_as_of hand a cutoff between t0 and t1 a snapshot whose
+    later pages were not knowable until t1 — the exact leak this store exists
+    to close, reintroduced by the store itself. Stamping t1 means every page
+    in the snapshot was already public at the time the snapshot claims.
 
     ``params`` is the request body as the caller asked for it, with pagination
     left out — pagination is transport, it differs per page, and two runs that
@@ -79,25 +89,47 @@ def _directory(endpoint: str) -> Path:
 
 
 def write_snapshot(snapshot: Snapshot) -> Path:
-    """Write *snapshot* where nothing can overwrite it, and say where."""
+    """Write *snapshot* where nothing can overwrite it, and say where.
+
+    Serialized in full to a temporary file first, then published under its
+    real name. Creating the final path up front and writing into it leaves a
+    half-written file at that name if anything interrupts the write — and
+    read_as_of parses every .json it finds, so one truncated file would raise
+    CorruptSnapshot for every later read. A later round cannot repair it
+    either: the occupied name pushes that round onto a suffix, and the broken
+    file stays. A round that dies mid-write must cost its own snapshot and
+    nothing else.
+    """
     directory = _directory(snapshot.endpoint)
     directory.mkdir(parents=True, exist_ok=True)
     stamp = snapshot.observed_at.astimezone(timezone.utc).strftime(
         "%Y-%m-%dT%H%M%SZ"
     )
-    path = directory / f"{stamp}.json"
-    suffix = 1
-    while True:
-        try:
-            # "x" rather than checking exists() first: two collectors racing
-            # inside one second are both real observations, and the
-            # check-then-write version silently drops one of them.
-            with open(path, "x") as handle:
-                handle.write(snapshot.model_dump_json(indent=2))
-            return path
-        except FileExistsError:
-            suffix += 1
-            path = directory / f"{stamp}-{suffix}.json"
+
+    handle, temporary = tempfile.mkstemp(dir=directory, suffix=".tmp")
+    try:
+        with os.fdopen(handle, "w") as writer:
+            writer.write(snapshot.model_dump_json(indent=2))
+
+        path = directory / f"{stamp}.json"
+        suffix = 1
+        while True:
+            try:
+                # os.link, not rename or replace: both of those overwrite
+                # silently on POSIX, and this archive's one promise is that
+                # they cannot. link fails with FileExistsError instead, which
+                # is how two collectors racing inside the same second both
+                # keep their observation rather than one erasing the other.
+                os.link(temporary, path)
+                return path
+            except FileExistsError:
+                suffix += 1
+                path = directory / f"{stamp}-{suffix}.json"
+    finally:
+        # The temporary is never the archive, published or not: on success it
+        # is a second link to the same bytes, on failure it is a fragment.
+        with suppress(OSError):
+            os.unlink(temporary)
 
 
 def read_as_of(

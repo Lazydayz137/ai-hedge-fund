@@ -152,3 +152,30 @@ def test_two_endpoints_do_not_share_a_directory():
 def test_snapshots_land_under_the_isolated_archive_dir():
     path = write_snapshot(_snapshot(MONDAY))
     assert paths.NANSEN_DIR in path.parents
+
+
+def test_a_write_that_dies_midway_leaves_no_file_behind(monkeypatch):
+    """A round that dies mid-write must cost its own snapshot and nothing else.
+
+    Publishing the final name before the bytes are complete would strand a
+    truncated file there, and read_as_of parses every .json it finds — so one
+    interrupted round would raise CorruptSnapshot for every later read, and no
+    later round could repair it because the occupied name pushes it to a
+    suffix.
+    """
+    snapshot = _snapshot(MONDAY)
+
+    def explode(self, **kwargs):
+        raise RuntimeError("connection reset mid-serialization")
+
+    monkeypatch.setattr(Snapshot, "model_dump_json", explode)
+    with pytest.raises(RuntimeError):
+        write_snapshot(snapshot)
+
+    directory = paths.NANSEN_DIR / SMART_MONEY_HOLDINGS.strip("/").replace("/", "__")
+    assert list(directory.glob("*")) == []
+
+    # And the archive is still usable afterwards.
+    monkeypatch.undo()
+    write_snapshot(snapshot)
+    assert read_as_of(SMART_MONEY_HOLDINGS, MONDAY) is not None

@@ -167,3 +167,37 @@ def test_a_collected_round_is_what_a_later_as_of_read_finds():
     found = read_as_of(SMART_MONEY_HOLDINGS, datetime.now(timezone.utc))
     assert found is not None
     assert found.pages[0]["data"] == [ROW]
+
+
+def test_a_page_cap_below_one_is_refused():
+    """_fetch's loop would never run, writing an empty snapshot marked partial
+    while the CLI exits 0 — an archive entry that reports success."""
+    with pytest.raises(ValueError, match="at least 1"):
+        collect(client=FakeClient(), max_pages=0)
+
+
+def test_the_snapshot_is_stamped_after_its_last_page():
+    """Stamping the first request instead would let an as-of read taken between
+    the first and last page return rows that were not knowable at that cutoff."""
+
+    class SlowClient(FakeClient):
+        """Records the wall time at which it served each page."""
+
+        def __init__(self):
+            super().__init__(pages_per_endpoint=3)
+            self.served_at: list[datetime] = []
+
+        def post(self, endpoint, body):
+            payload = super().post(endpoint, body)
+            self.served_at.append(datetime.now(timezone.utc))
+            return payload
+
+    client = SlowClient()
+    result = collect(client=client)
+    snapshot = read_as_of(SMART_MONEY_HOLDINGS, datetime.now(timezone.utc))
+
+    assert result.failures == []
+    assert len(client.served_at) >= 3
+    # The holdings endpoint is planned first, so its last page is the third
+    # response served. The stamp must not predate it.
+    assert snapshot.observed_at >= client.served_at[2]

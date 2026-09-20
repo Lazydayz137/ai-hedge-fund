@@ -28,6 +28,16 @@ from hedge_fund.nansen.client import API_KEY_ENV, MissingAPIKey
 from hedge_fund.nansen.collect import DEFAULT_MAX_PAGES, collect
 
 
+def _page_cap(value: str) -> int:
+    """An argparse type that refuses a cap no page could satisfy."""
+    pages = int(value)
+    if pages < 1:
+        raise argparse.ArgumentTypeError(
+            f"must be at least 1, got {pages}"
+        )
+    return pages
+
+
 def main() -> None:
     """Run one snapshot round, and exit non-zero if any endpoint failed.
 
@@ -52,7 +62,7 @@ def main() -> None:
         "(default: ethereum)",
     )
     parser.add_argument(
-        "--max-pages", type=int, default=DEFAULT_MAX_PAGES,
+        "--max-pages", type=_page_cap, default=DEFAULT_MAX_PAGES,
         help=f"stop paging an endpoint after this many pages and record the "
         f"snapshot as partial (default: {DEFAULT_MAX_PAGES})",
     )
