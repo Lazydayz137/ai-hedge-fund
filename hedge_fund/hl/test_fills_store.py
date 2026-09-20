@@ -3,6 +3,9 @@ logic, and the CSV row reader. All from a canned fixture, no network."""
 
 from __future__ import annotations
 
+import hashlib
+import json
+import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -113,11 +116,15 @@ def test_reversion_to_an_older_hash_is_a_new_restatement_not_a_noop():
     assert latest[0].px == 85.586  # back to A's content, not stuck reporting B
 
 
-def test_orphaned_sidecar_without_data_is_reclaimed_not_wedged():
+def test_orphaned_sidecar_without_data_burns_the_slot_not_wedged():
     """A crash between reserving a version slot (sidecar written) and
     publishing its data file leaves a sidecar with no matching data file.
-    The next save targeting that same slot must reclaim it, not raise or
-    leave the pass permanently stuck on a dead reservation."""
+    That slot is NEVER reclaimed -- reclaiming it is indistinguishable
+    from stealing a reservation a live writer still holds, which is the
+    corruption this fix closes. The next save must skip the burned slot
+    (not wedge, not raise) and write into the next free one, and the
+    latest-version/hash comparison must still find the true latest data,
+    not the burned gap."""
     first = save_raw(BUILDER, DAY, body=FIXTURE, http_status=200, fetched_at=FETCHED_AT)
     orphan_sidecar = first.parent / "20260918-v2.csv.lz4.json"
     orphan_sidecar.write_text("{}", encoding="utf-8")  # crash artifact, no data file
@@ -126,6 +133,82 @@ def test_orphaned_sidecar_without_data_is_reclaimed_not_wedged():
         save_raw(BUILDER, DAY, body=RESTATED_BODY, http_status=200, fetched_at=FETCHED_AT)
 
     new_path = exc_info.value.path
-    assert new_path.name == "20260918-v2.csv.lz4"
+    assert new_path.name == "20260918-v3.csv.lz4"  # v2 is burned forever, not reused
     assert new_path.exists()
-    assert new_path.with_name(new_path.name + ".json").read_text(encoding="utf-8") != "{}"
+    # the burned slot's sidecar is untouched, still there, still invalid --
+    # it is not silently repaired or removed by a later writer
+    assert orphan_sidecar.read_text(encoding="utf-8") == "{}"
+    # the dedupe/"latest" comparison skips the burned gap and reads v1,
+    # then correctly treats the new body as a restatement of it
+    latest = list(read_rows(BUILDER, DAY))
+    assert latest[0].px == 85.999  # the restated content, published as v3
+    original = list(read_rows(BUILDER, DAY, version=1))
+    assert original[0].px == 85.586  # v1 untouched
+    # the burned slot really has no data to read
+    assert list(read_rows(BUILDER, DAY, version=2)) == []
+
+
+def test_two_live_writers_racing_the_same_reservation_both_survive(monkeypatch):
+    """Reproduces the exact interleaving from the bug report: writer A
+    exclusively creates v2's sidecar (reserving the slot) but has not yet
+    written its data file when writer B shows up wanting a slot too. On
+    the pre-fix code, B would see A's sidecar, find no data file yet,
+    conclude "crash orphan", unlink A's live reservation, take v2 for
+    itself, and publish -- then A would finish and its publish would
+    silently clobber B's, leaving v2's sidecar hash mismatched against its
+    bytes and telling B's caller a version was saved that no longer
+    exists. On the fixed code A's reservation is never stolen: B lands on
+    the next free slot instead, and both writers' content survives with a
+    correct sidecar for each.
+
+    The interleaving is driven deterministically: uuid.uuid4() is called
+    by save_raw only once A's sidecar for v2 has been created on disk and
+    only right before A writes its data file -- exactly the window the
+    bug report describes -- so hooking it lets writer B's full save_raw
+    call run synchronously inside that window."""
+    v1_path = save_raw(BUILDER, DAY, body=FIXTURE, http_status=200, fetched_at=FETCHED_AT)
+
+    _WRITER_A_ROW = (
+        "2026-09-18T00:09:03Z,0xd0eeffa051413174652fa4369bc05296a819c7c0,ETH,Bid,"
+        "3200.5,1.5,false,Na,Gtc,false,0x827956612a8700627451204a3ae26268bd1a1526,0.0,0,0.5"
+    )
+    writer_a_body = lz4.frame.compress(f"{_HEADER}\n{_WRITER_A_ROW}\n".encode("utf-8"))
+
+    real_uuid4 = uuid.uuid4
+    state = {"fired": False, "writer_b_path": None}
+
+    def fake_uuid4():
+        if not state["fired"]:
+            state["fired"] = True
+            # Writer A's v2 sidecar reservation exists on disk right now,
+            # but A has not written v2's data file yet. Writer B collides
+            # on the same (builder, day) here.
+            with pytest.raises(RestatedFile) as exc_info:
+                save_raw(BUILDER, DAY, body=RESTATED_BODY, http_status=200, fetched_at=FETCHED_AT)
+            state["writer_b_path"] = exc_info.value.path
+        return real_uuid4()
+
+    monkeypatch.setattr("hedge_fund.hl.fills_store.uuid.uuid4", fake_uuid4)
+
+    with pytest.raises(RestatedFile) as exc_info:
+        save_raw(BUILDER, DAY, body=writer_a_body, http_status=200, fetched_at=FETCHED_AT)  # writer A
+    writer_a_path = exc_info.value.path
+
+    # Neither writer stole the other's slot.
+    assert writer_a_path.name == "20260918-v2.csv.lz4"
+    assert state["writer_b_path"].name == "20260918-v3.csv.lz4"
+
+    # Every visible version's sidecar hash matches its own data bytes --
+    # no cross-writer clobbering happened.
+    for path, body in (
+        (v1_path, FIXTURE),
+        (writer_a_path, writer_a_body),
+        (state["writer_b_path"], RESTATED_BODY),
+    ):
+        sidecar = json.loads(path.with_name(path.name + ".json").read_text(encoding="utf-8"))
+        assert sidecar["sha256"] == hashlib.sha256(body).hexdigest()
+        assert path.read_bytes() == body
+
+    # Both writers' content survives -- nothing was silently lost.
+    assert list(read_rows(BUILDER, DAY, version=2))[0].coin == "ETH"
+    assert list(read_rows(BUILDER, DAY, version=3))[0].px == 85.999
