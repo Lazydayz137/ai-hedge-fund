@@ -11,8 +11,16 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from pydantic import ValidationError
+
 from hedge_fund.hl.client import HLClient, HLClientError
 from hedge_fund.hl.models import DexConfig, MarketSnapshot, PerpMarketRow, ScopeFailure, SpotMarketRow
+
+# A malformed payload (missing field, wrong type, unparseable price) must
+# cost only the scope that raised it -- never abort the pass and lose the
+# scopes already collected. HLClientError is the transport/HTTP failure;
+# these are the ways a *parsed* JSON body can still fail to become rows.
+_PARSE_ERRORS = (KeyError, TypeError, ValueError, IndexError, ValidationError)
 
 
 def collect_snapshot(client: HLClient | None = None) -> MarketSnapshot:
@@ -37,6 +45,8 @@ def collect_snapshot(client: HLClient | None = None) -> MarketSnapshot:
             perp_rows.extend(_parse_perp_rows(native, dex="", observed_at=observed_at))
         except HLClientError as exc:
             failures.append(ScopeFailure(scope="native", error=str(exc)))
+        except _PARSE_ERRORS as exc:
+            failures.append(ScopeFailure(scope="native", error=f"unparseable payload: {exc}"))
 
         dexes: list[DexConfig] = []
         dex_names: list[str] = []
@@ -66,6 +76,8 @@ def collect_snapshot(client: HLClient | None = None) -> MarketSnapshot:
                     failures.append(ScopeFailure(scope=f"{name} (config)", error=str(exc)))
         except HLClientError as exc:
             failures.append(ScopeFailure(scope="perp_dexs", error=str(exc)))
+        except _PARSE_ERRORS as exc:
+            failures.append(ScopeFailure(scope="perp_dexs", error=f"unparseable payload: {exc}"))
 
         for name in dex_names:
             try:
@@ -74,6 +86,8 @@ def collect_snapshot(client: HLClient | None = None) -> MarketSnapshot:
                 perp_rows.extend(_parse_perp_rows(payload, dex=name, observed_at=observed_at))
             except HLClientError as exc:
                 failures.append(ScopeFailure(scope=f"dex:{name}", error=str(exc)))
+            except _PARSE_ERRORS as exc:
+                failures.append(ScopeFailure(scope=f"dex:{name}", error=f"unparseable payload: {exc}"))
 
         try:
             spot = client.spot_meta_and_asset_ctxs()
@@ -81,6 +95,8 @@ def collect_snapshot(client: HLClient | None = None) -> MarketSnapshot:
             spot_rows.extend(_parse_spot_rows(spot, observed_at=observed_at))
         except HLClientError as exc:
             failures.append(ScopeFailure(scope="spot", error=str(exc)))
+        except _PARSE_ERRORS as exc:
+            failures.append(ScopeFailure(scope="spot", error=f"unparseable payload: {exc}"))
 
         return MarketSnapshot(
             observed_at=observed_at,

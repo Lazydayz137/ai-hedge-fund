@@ -8,6 +8,7 @@ captured with, to keep the fixture small -- see its inline comment).
 
 from __future__ import annotations
 
+import copy
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -209,6 +210,29 @@ def test_native_failure_writes_no_perp_rows_but_spot_still_runs():
     assert any(f.scope == "native" for f in snap.failures)
     assert snap.perp_rows == []
     assert len(snap.spot_rows) == 2
+
+
+def test_unparseable_native_payload_costs_native_only_not_the_whole_pass():
+    """A parsing error (missing field, bad shape) must record a ScopeFailure
+    for that scope, not raise out of collect_snapshot and lose every scope
+    collected before it -- only HLClientError used to be caught here."""
+    broken = copy.deepcopy(NATIVE)
+    del broken[0]["universe"][0]["szDecimals"]
+
+    snap = collect_snapshot(FakeClient(native=broken, spot=SPOT))
+    assert any(f.scope == "native" for f in snap.failures)
+    assert snap.perp_rows == []
+    assert len(snap.spot_rows) == 2  # spot still ran despite native's parse failure
+
+
+def test_unparseable_spot_payload_costs_spot_only():
+    broken_spot = copy.deepcopy(SPOT)
+    del broken_spot[0]["universe"][0]["index"]
+
+    snap = collect_snapshot(FakeClient(spot=broken_spot))
+    assert any(f.scope == "spot" for f in snap.failures)
+    assert snap.spot_rows == []
+    assert len(snap.perp_rows) == 3  # native still ran despite spot's parse failure
 
 
 def test_all_rows_share_one_observed_at():
