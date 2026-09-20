@@ -25,6 +25,18 @@ def _isolate_user_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_nansen_dir(tmp_path, monkeypatch):
+    """Point the Nansen snapshot archive at a scratch dir for every test.
+
+    Snapshots are written with open(..., "x") and are meant to be
+    permanent. Without this, a test that collects a round would drop files
+    into the user's own archive, where they would be indistinguishable
+    from real observations and could never be safely deleted in bulk.
+    """
+    monkeypatch.setattr(paths, "NANSEN_DIR", tmp_path / "nansen-snapshots")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_snapshots_dir(tmp_path, monkeypatch):
     """Point the market-snapshot archive at a scratch dir for every test.
 
