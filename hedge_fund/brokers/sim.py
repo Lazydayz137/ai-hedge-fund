@@ -28,6 +28,28 @@ class SimBroker:
         self._realized = 0.0
         self._commission = commission or Commission()
 
+    @classmethod
+    def resume(
+        cls,
+        cash: float,
+        positions: dict[str, int],
+        cost_basis: dict[str, float],
+        commission: Commission | None = None,
+    ) -> "SimBroker":
+        """Rebuild a book that a previous session ended with.
+
+        Takes plain numbers rather than a receipt: the broker layer knows
+        nothing about the pipeline that serializes it, which is the same
+        reason a live broker can sit behind this protocol unchanged.
+
+        Realized P&L starts at zero — it measures what this session realizes,
+        not what the position earned before it was handed over.
+        """
+        broker = cls(cash=cash, commission=commission)
+        broker._shares = {t: s for t, s in positions.items() if s != 0}
+        broker._basis = {t: cost_basis[t] for t in broker._shares}
+        return broker
+
     def positions(self) -> dict[str, Position]:
         return {
             t: Position(ticker=t, shares=s, cost_basis=self._basis.get(t, 0.0))

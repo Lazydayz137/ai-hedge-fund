@@ -65,8 +65,10 @@ class CycleRecord(BaseModel):
     orders: list[Order]
     fills: list[Fill]
     positions: dict[str, int]           # signed shares after fills
+    cost_basis: dict[str, float] = {}   # weighted-average entry price per open name
     cash: float
     nav: float                          # cash + sum(shares * mark)
+    realized_pnl: float = 0.0           # THIS cycle's realized gains, from its fills
 
     @field_validator("spec", mode="before")
     @classmethod
