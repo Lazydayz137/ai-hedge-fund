@@ -16,6 +16,8 @@ USER = "7KYjRhH6mp3dnN2PPEsaa3bVo1KYAMPhUaciufGPYJnn"
 # Trimmed from a real getTransaction response captured 2026-09-20, keeping the
 # shape every sampled transaction has: the sponsor as fee payer plus exactly
 # one other signer.
+
+
 def _payload(*, signers=(GAS_SPONSOR, USER), err=None, slot=448847587):
     return {
         "slot": slot,
