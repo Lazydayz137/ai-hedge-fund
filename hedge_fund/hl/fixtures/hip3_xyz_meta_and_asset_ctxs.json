@@ -1,0 +1,56 @@
+[
+  {
+    "universe": [
+      {
+        "szDecimals": 4,
+        "name": "xyz:XYZ100",
+        "maxLeverage": 30,
+        "marginTableId": 30,
+        "growthMode": "enabled",
+        "lastFeeScaleChangeTime": "2025-11-23T17:37:10.033211662",
+        "deployerFeeScale": "1.0"
+      },
+      {
+        "szDecimals": 3,
+        "name": "xyz:TSLA",
+        "maxLeverage": 20,
+        "marginTableId": 20,
+        "growthMode": "enabled",
+        "lastFeeScaleChangeTime": "2025-11-23T17:37:10.033211662",
+        "deployerFeeScale": "1.0"
+      }
+    ]
+  },
+  [
+    {
+      "funding": "0.00000625",
+      "openInterest": "6273.0172",
+      "prevDayPx": "29639.0",
+      "dayNtlVlm": "26397831.2301000059",
+      "premium": "-0.0000349049",
+      "oraclePx": "29652.0",
+      "markPx": "29652.0",
+      "midPx": "29650.5",
+      "impactPxs": [
+        "29650.0",
+        "29651.93"
+      ],
+      "dayBaseVlm": "890.9779"
+    },
+    {
+      "funding": "0.00000625",
+      "openInterest": "113305.184",
+      "prevDayPx": "364.66",
+      "dayNtlVlm": "1987470.5849099997",
+      "premium": "0.0002520134",
+      "oraclePx": "365.06",
+      "markPx": "365.14",
+      "midPx": "365.15",
+      "impactPxs": [
+        "365.124",
+        "365.18"
+      ],
+      "dayBaseVlm": "5447.796"
+    }
+  ]
+]

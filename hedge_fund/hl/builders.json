@@ -1,0 +1,12 @@
+[
+  {
+    "address": "0xb838e4d1c8bcf71fa8e63299d5aa3258c83d6adb",
+    "label": "fomo-perps",
+    "source": "DefiLlama/dimension-adapters factory/hyperliquid.ts, confirmed 2026-09-19"
+  },
+  {
+    "address": "0x2a2b6b093a9813fbd8cddae800c3d17d46460d17",
+    "label": "fomo-social-trading-perps",
+    "source": "DefiLlama/dimension-adapters factory/hyperliquid.ts, confirmed 2026-09-19"
+  }
+]
