@@ -140,7 +140,7 @@ def main() -> None:
         )
         return
 
-    prior = None if args.fresh else latest_run(spec.name)
+    prior = None if args.fresh else latest_run(spec.name, as_of=args.date)
     broker = SimBroker(cash=spec.capital) if prior is None else resume_broker(prior)
     if prior is not None:
         console.print(

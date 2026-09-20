@@ -138,3 +138,52 @@ def test_two_runs_in_one_second_both_survive():
     assert first != second
     assert first.exists() and second.exists()
     assert len(list(paths.MANDATES_DIR.glob("ledger-test-run-*.json"))) == 2
+
+
+# --- picking the right receipt ----------------------------------------------
+
+
+def test_cutoff_refuses_a_book_from_after_the_cycle():
+    """A historical run must not resume a book from a later date.
+
+    Receipts are ordered by the cycle's as-of date, not by when the file landed.
+    Run today, then run a 2024 date, and mtime ordering would hand the 2024
+    cycle today's positions — lookahead arriving through the ledger.
+    """
+    save_run(_record(as_of="2024-01-10", positions={"AAPL": 5}))
+    save_run(_record(as_of="2026-09-20", positions={"AAPL": 999}))
+    resumed = latest_run("ledger-test", as_of="2024-06-01")
+    assert resumed is not None
+    assert resumed.as_of == "2024-01-10"
+    assert resumed.positions == {"AAPL": 5}
+
+
+def test_cutoff_is_inclusive_of_its_own_date():
+    save_run(_record(as_of="2024-06-01"))
+    assert latest_run("ledger-test", as_of="2024-06-01").as_of == "2024-06-01"
+
+
+def test_no_eligible_receipt_reads_as_no_prior_book():
+    save_run(_record(as_of="2026-09-20"))
+    assert latest_run("ledger-test", as_of="2024-01-01") is None
+
+
+def test_as_of_beats_write_order():
+    """Written second, dated earlier — the later-dated book still wins."""
+    save_run(_record(as_of="2026-01-01", positions={"AAPL": 7}))
+    save_run(_record(as_of="2024-01-01", positions={"AAPL": 3}))
+    assert latest_run("ledger-test").positions == {"AAPL": 7}
+
+
+def test_a_receipt_naming_another_fund_is_refused():
+    """The filename can lie; the record cannot.
+
+    A renamed or hand-edited receipt that matches the glob but carries another
+    fund's book would otherwise be resumed as this fund's cash and positions.
+    """
+    impostor = _record(fund="someone-else", positions={"AAPL": 999})
+    (paths.MANDATES_DIR).mkdir(parents=True, exist_ok=True)
+    (paths.MANDATES_DIR / "ledger-test-run-2026-01-01-000000.json").write_text(
+        impostor.model_dump_json()
+    )
+    assert latest_run("ledger-test") is None

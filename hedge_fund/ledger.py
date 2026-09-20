@@ -14,6 +14,7 @@ may reach back into the UI that happens to share the directory.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -35,27 +36,48 @@ def save_run(record: CycleRecord) -> Path:
     # would land on the same name. A ledger that quietly overwrites an entry
     # is not a ledger, and a scripted caller hits this far sooner than a human
     # clicking through the app does.
-    suffix = 2
-    while path.exists():
-        path = paths.MANDATES_DIR / f"{record.fund}-run-{stamp}-{suffix}.json"
-        suffix += 1
-    path.write_text(record.model_dump_json(indent=2))
-    return path
+    # Exclusive creation rather than exists()-then-write: two runs racing here
+    # would both pass the check and one would land on top of the other.
+    suffix = 1
+    while True:
+        try:
+            with path.open("x") as handle:
+                handle.write(record.model_dump_json(indent=2))
+            return path
+        except FileExistsError:
+            suffix += 1
+            path = paths.MANDATES_DIR / f"{record.fund}-run-{stamp}-{suffix}.json"
 
 
-def latest_run(fund: str) -> CycleRecord | None:
-    """The newest run receipt for *fund*, or None if it has never run.
+def latest_run(fund: str, as_of: str | None = None) -> CycleRecord | None:
+    """The newest book *fund* held at or before *as_of*, or None if it has none.
 
-    An unreadable receipt is skipped rather than raised: a hand-edited or
-    truncated file should cost a fund the resume, not the run. Backtest
-    receipts share the directory but not the -run- infix, so they never match.
+    Ordered by the cycle's own as-of date, not by when the file was written.
+    Those differ the moment someone runs a historical date after a recent one,
+    and resuming by mtime would hand a 2024 cycle the book from a 2026 run —
+    lookahead smuggled in through the ledger, in a pipeline whose whole promise
+    is that a cycle sees only what was knowable on its date.
+
+    A receipt is only accepted if it names this fund: the filename can be
+    renamed or hand-edited, and resuming the wrong fund's cash and positions
+    would be silent. Unreadable receipts are skipped rather than raised — a
+    truncated file should cost the resume, not the run. Backtest receipts share
+    the directory but not the -run- infix, so they never match.
     """
-    receipts = sorted(
-        paths.MANDATES_DIR.glob(f"{fund}-run-*.json"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    for path in receipts:
+    eligible: list[tuple[str, float, Path]] = []
+    for path in paths.MANDATES_DIR.glob(f"{fund}-run-*.json"):
+        try:
+            # Peek at the two fields that decide eligibility rather than
+            # validating every receipt in the fund's history on every run.
+            peek = json.loads(path.read_text())
+            when = peek["as_of"]
+            if peek["fund"] != fund or (as_of is not None and when > as_of):
+                continue
+            eligible.append((when, path.stat().st_mtime, path))
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+
+    for _, _, path in sorted(eligible, reverse=True):
         try:
             return CycleRecord.model_validate_json(path.read_text())
         except (OSError, ValueError):
