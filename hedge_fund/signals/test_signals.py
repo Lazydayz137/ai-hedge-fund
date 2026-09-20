@@ -110,9 +110,13 @@ class TestPEADPredict:
     def test_45_day_retrospective_filter(self):
         """Prior-quarter comparison rows parsed out of a current 8-K are dropped,
         not mistaken for a fresh surprise."""
-        # Filing is 100+ days after the report period → retrospective, excluded
+        # Filing is 100+ days after the report period → retrospective, excluded.
+        # Queried the day AFTER the filing, not on it: the point-in-time cut is
+        # strict, so a same-day query would drop this row before the
+        # retrospective filter ever saw it and the test would pass without
+        # testing anything.
         fd = MockFDClient([_rec("2025-12-31", "2026-04-13", "BEAT")])
-        sig = PEADModel().predict("TEST", "2026-04-13", fd)
+        sig = PEADModel().predict("TEST", "2026-04-14", fd)
         assert sig.value == 0.0
 
     def test_dedup_prefers_8k(self):
