@@ -60,6 +60,16 @@ def test_http_500_raises(client):
     assert exc_info.value.status_code == 500
 
 
+def test_unresolved_3xx_raises_rather_than_returning_the_redirect_body(client):
+    """requests follows redirects by default, but an unresolved 3xx (too
+    many redirects, a redirect requests declined to follow) can still reach
+    here as the final response -- it must not be read as market data."""
+    _stub(client, _FakeResponse(301, text="moved"))
+    with pytest.raises(HLClientError) as exc_info:
+        client.meta_and_asset_ctxs()
+    assert exc_info.value.status_code == 301
+
+
 def test_non_json_body_raises(client):
     _stub(client, _FakeResponse(200, payload=None))
     with pytest.raises(HLClientError):

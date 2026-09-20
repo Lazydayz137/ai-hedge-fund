@@ -91,7 +91,7 @@ class HLClient:
                 f"POST /info ({body.get('type')}) failed: {exc}"
             ) from exc
 
-        if resp.status_code >= 400:
+        if not 200 <= resp.status_code < 300:
             raise HLClientError(
                 f"POST /info ({body.get('type')}) returned {resp.status_code}: "
                 f"{resp.text[:200]}",
