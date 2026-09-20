@@ -26,9 +26,9 @@ class PEADModel(QuantModel):
     """Long after an EPS BEAT, short after a MISS.
 
     `predict(ticker, date)` returns ±1.0 conviction if a qualifying earnings
-    surprise was filed within `signal_window_days` of `date`, else 0.0 (no view).
-    Conviction magnitude is fixed ±1 for v0 — scaling by surprise size is a
-    future enhancement.
+    surprise was filed strictly BEFORE `date` and no more than
+    `signal_window_days` before it, else 0.0 (no view). Conviction magnitude
+    is fixed ±1 for v0 — scaling by surprise size is a future enhancement.
     """
 
     def __init__(
@@ -48,11 +48,18 @@ class PEADModel(QuantModel):
         return "pead"
 
     def predict(self, ticker: str, date: str, data_client: DataClient) -> Signal:
+        """The drift view for *ticker* on *date*: ±1 on the newest surprise
+        already public before the cycle, 0.0 when there is nothing to react to."""
         as_of = _parse_date(date)
         events = self._qualifying_events(ticker, data_client)
 
-        # Point-in-time: only consider filings on or before `date` (no lookahead)
-        past = [e for e in events if _parse_date(e["filing_date"]) <= as_of]
+        # Point-in-time: only filings STRICTLY before `date` are actionable.
+        # A cycle marks and fills at the as-of close, and earnings 8-Ks are
+        # overwhelmingly accepted after 4pm ET — so a filing dated `date`
+        # became public only after the price this cycle trades at had already
+        # printed. Admitting it would buy the drift at the pre-announcement
+        # close, which is free money that no live desk could have taken.
+        past = [e for e in events if _parse_date(e["filing_date"]) < as_of]
         if not past:
             return self._neutral(ticker, date)
 
@@ -60,7 +67,8 @@ class PEADModel(QuantModel):
         event = max(past, key=lambda e: e["filing_date"])
         filed = _parse_date(event["filing_date"])
 
-        # Only fire if the event is fresh (we just learned about it)
+        # Only fire if the event is fresh (we just learned about it). `filed`
+        # is strictly in the past, so the live window is 1..signal_window_days.
         if (as_of - filed).days > self._signal_window_days:
             return self._neutral(ticker, date)
 

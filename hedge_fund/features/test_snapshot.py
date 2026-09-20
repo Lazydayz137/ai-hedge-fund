@@ -25,6 +25,7 @@ class MockDataClient:
 
 
 def _metric(report_period, **kwargs):
+    """One metrics row with plausible defaults; override any field by keyword."""
     defaults = {
         "ticker": "TEST",
         "period": "ttm",
@@ -48,6 +49,8 @@ def _history(n=8):
 
 
 def test_as_of_passes_through_to_data_client():
+    """as_of reaches the data layer verbatim, so the server-side filing_date cut
+    is applied to the same date the caller asked about."""
     client = MockDataClient(metrics=_history())
     build_snapshot("TEST", "2025-01-15", client)
     call = client.metrics_calls[0]
@@ -56,12 +59,15 @@ def test_as_of_passes_through_to_data_client():
 
 
 def test_insufficient_data_raises():
+    """Too little history raises rather than prompting an analyst on thin data."""
     client = MockDataClient(metrics=_history(3))  # below MIN_PERIODS
     with pytest.raises(InsufficientData):
         build_snapshot("TEST", "2025-01-15", client)
 
 
 def test_aggregates():
+    """The derived numbers are computed here in Python, so the LLM is handed facts
+    instead of being asked to do arithmetic it is bad at."""
     metrics = _history(4)
     # oldest gross margin 0.30, newest 0.40 -> trend +0.10
     metrics[-1] = _metric("2024-03-31", gross_margin=0.30)
@@ -84,13 +90,56 @@ def test_market_cap_comes_from_pit_metrics_not_facts():
     facts = CompanyFacts(ticker="TEST", sector="Tech")
     client = MockDataClient(metrics=_history(), facts=facts)
 
-    snap = build_snapshot("TEST", "2020-06-30", client)
+    # as_of must post-date the canned rows: the mock ignores end_date, so the
+    # point-in-time cut is applied in build_snapshot, not by this client.
+    snap = build_snapshot("TEST", "2025-01-15", client)
 
     assert snap.market_cap_latest == pytest.approx(1e9)  # from metrics row
     assert snap.sector == "Tech"  # facts used only for slow-moving attributes
 
 
+def test_same_day_filing_is_excluded():
+    """A row filed on the cycle date itself is not point-in-time knowable at the
+    as-of close the cycle trades at, so it must not reach the LLM prompt."""
+    metrics = _history(5)
+    metrics[0] = _metric("2024-12-31", filing_date="2025-01-15")
+    client = MockDataClient(metrics=metrics)
+
+    snap = build_snapshot("TEST", "2025-01-15", client)
+
+    assert [p.filing_date for p in snap.periods] == [
+        m.filing_date for m in metrics[1:]
+    ]
+    assert snap.market_cap_latest == pytest.approx(metrics[1].market_cap)
+
+
+def test_prior_day_filing_is_included():
+    """The day-before filing IS knowable and stays — the cut is strict, not a
+    blanket one-period haircut."""
+    metrics = _history(5)
+    metrics[0] = _metric("2024-12-31", filing_date="2025-01-14")
+    client = MockDataClient(metrics=metrics)
+
+    snap = build_snapshot("TEST", "2025-01-15", client)
+
+    assert snap.periods[0].filing_date == "2025-01-14"
+    assert len(snap.periods) == 5
+
+
+def test_same_day_filings_can_starve_the_snapshot():
+    """Dropping same-day rows can push history below MIN_PERIODS; that must
+    raise InsufficientData rather than quietly prompting on a short history."""
+    metrics = [_metric(q, filing_date="2025-01-15") for q in
+               ("2024-12-31", "2024-09-30")] + _history(2)
+    client = MockDataClient(metrics=metrics)
+
+    with pytest.raises(InsufficientData):
+        build_snapshot("TEST", "2025-01-15", client)
+
+
 def test_content_hash_stable_and_sensitive():
+    """The cache key turns on the data alone: identical history is a free hit, a
+    changed filing is a genuine miss."""
     client_a = MockDataClient(metrics=_history())
     client_b = MockDataClient(metrics=_history())
     snap_a = build_snapshot("TEST", "2025-01-15", client_a)
@@ -115,6 +164,8 @@ def test_same_data_different_as_of_same_render_and_hash():
 
 
 def test_render_contains_the_facts():
+    """The prompt carries the filed history but never the as-of date, which would
+    both break the cache and let the model anchor on post-date world events."""
     snap = build_snapshot("TEST", "2025-01-15", MockDataClient(metrics=_history()))
     text = snap.render()
     assert "2025-01-15" not in text  # as_of must never leak into the prompt

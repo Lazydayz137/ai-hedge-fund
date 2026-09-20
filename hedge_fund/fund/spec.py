@@ -140,6 +140,21 @@ class FundSpec(BaseModel):
         return strategies
 
 
+class AuditFundSpec(FundSpec):
+    """The mandate as EMBEDDED IN A RECEIPT: same shape, but `extra='allow'`.
+
+    A mandate loaded from YAML must fail loud on a typo, so FundSpec forbids
+    extras. A receipt is the opposite problem: it was written by an older
+    build and can never be corrected, so a field this build has since dropped
+    (the legacy `universe` key `load_spec` already pops is the precedent) must
+    not make a fund's entire history unreadable. Unknown keys are kept on the
+    model rather than discarded, so the audit copy still says exactly what the
+    old mandate said.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+
 def normalize_universe(tickers: list[str]) -> list[str]:
     """Clean a run's ticker list: upper-cased, de-duped, order preserved.
 
