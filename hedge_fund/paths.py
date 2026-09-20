@@ -17,6 +17,11 @@ from pathlib import Path
 USER_DIR = Path.home() / ".hedge-fund"
 MANDATES_DIR = USER_DIR / "mandates"
 CACHE_DIR = USER_DIR / "cache"
+# Market snapshots are an archive, not a cache: nothing here is ever
+# refetchable, because no vendor sells the history of a perp's funding and
+# basis after the fact. Kept out of CACHE_DIR so that clearing the cache
+# can never take the archive with it.
+SNAPSHOTS_DIR = USER_DIR / "market-snapshots"
 ENV_PATH = USER_DIR / ".env"
 
 # The example mandate ships inside the package; it is copied out (never read

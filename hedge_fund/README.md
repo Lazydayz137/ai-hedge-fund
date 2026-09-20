@@ -83,6 +83,7 @@ Data (point-in-time) → Alpha models → Portfolio → Risk → Execution → L
 | `pipeline/` | `run_cycle` — one code path for backtest/paper/live; `CycleRecord` | ✅ |
 | `backtesting/` | `backtest_fund` — the whole fund over history on `run_cycle` — plus the per-model engine | ✅ |
 | `event_study/` | Market-model abnormal returns (CARs) | ✅ |
+| `hyperliquid/` | Perp market-state collector — funding, OI, mark, oracle, basis for every Hyperliquid perp incl. HIP-3 builder markets; `hl-snapshot` to cron it | ✅ |
 | `validation/` | Combinatorial purged CV (CPCV), backtest-overfitting prob (PBO) | ⬜ |
 | `tui/` | The interactive app (Textual): fund builder + live backtest board | ✅ |
 

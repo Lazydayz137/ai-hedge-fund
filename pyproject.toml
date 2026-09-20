@@ -36,6 +36,7 @@ textual = "^8.2.8"
 
 [tool.poetry.scripts]
 aihf = "hedge_fund.run:main"
+hl-snapshot = "hedge_fund.hyperliquid.__main__:main"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"
