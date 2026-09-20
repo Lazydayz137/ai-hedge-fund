@@ -54,16 +54,29 @@ class Attempt(BaseModel):
 
 
 class Collection(BaseModel):
+    """One round's outcome: every endpoint attempted, and how each one went.
+
+    A round is reported, never summarised away. The caller decides what a
+    partial round is worth; this only says what happened, so that a gap in
+    the archive is always traceable to the round that failed to fill it.
+    """
+
     started_at: datetime
     collector_version: str = COLLECTOR_VERSION
     attempts: list[Attempt]
 
     @property
     def failures(self) -> list[Attempt]:
+        """Attempts that wrote nothing — the endpoint errored."""
         return [a for a in self.attempts if a.error is not None]
 
     @property
     def partial(self) -> list[Attempt]:
+        """Attempts that wrote a snapshot the API did not finish paginating.
+
+        Distinct from a failure: there IS a snapshot on disk, and it is
+        honestly marked incomplete rather than passed off as a full one.
+        """
         return [a for a in self.attempts if a.error is None and not a.complete]
 
 

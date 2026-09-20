@@ -29,6 +29,12 @@ from hedge_fund.nansen.collect import DEFAULT_MAX_PAGES, collect
 
 
 def main() -> None:
+    """Run one snapshot round, and exit non-zero if any endpoint failed.
+
+    Built to be cron'd, so the exit code is the whole interface: 0 wrote
+    everything asked for, 1 something failed and the archive has a hole in
+    it, 2 there is no API key and nothing was attempted.
+    """
     parser = argparse.ArgumentParser(
         prog="nansen-snapshot",
         description="Snapshot Nansen's smart-money and perp endpoints, keyed "

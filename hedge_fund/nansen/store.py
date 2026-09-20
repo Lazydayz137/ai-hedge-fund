@@ -71,6 +71,7 @@ class Snapshot(BaseModel):
 
 
 def _directory(endpoint: str) -> Path:
+    """Where one endpoint's snapshots live, one directory per endpoint."""
     # Looked up through the module, not bound at import: tests redirect it,
     # and nothing should be able to write into a real archive by accident.
     # "/" becomes "__" so that /a/b-c and /a-b/c cannot share a directory.
