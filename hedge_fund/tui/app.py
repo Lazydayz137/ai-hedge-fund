@@ -67,6 +67,7 @@ from hedge_fund.fund import (
     load_strategy,
     normalize_universe,
 )
+from hedge_fund.ledger import latest_run, resume_broker
 from hedge_fund.models import Signal
 from hedge_fund.pipeline import CycleRecord, run_cycle
 from hedge_fund.pipeline.run_cycle import _MARK_LOOKBACK_DAYS
@@ -1267,7 +1268,11 @@ class RunScreen(Screen):
                     future.result()
 
             fund = Fund(spec)
-            broker = SimBroker(cash=spec.capital)
+            # The same book the CLI resumes: receipts share a directory and a
+            # naming convention, so a run here continues one from there.
+            prior = latest_run(spec.name)
+            broker = (SimBroker(cash=spec.capital) if prior is None
+                      else resume_broker(prior))
             with FDClient() as raw:
                 record = run_cycle(fund, as_of, broker, CachedDataClient(raw),
                                    universe)
