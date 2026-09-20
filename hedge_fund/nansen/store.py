@@ -88,6 +88,27 @@ def _directory(endpoint: str) -> Path:
     return paths.NANSEN_DIR / endpoint.strip("/").replace("/", "__")
 
 
+def _sync_directory(directory: Path) -> None:
+    """Make a newly linked name durable, where the platform allows it.
+
+    The file's own bytes being on disk does not put its directory entry
+    there. Guarded rather than assumed: opening a directory read-only is a
+    POSIX thing, and on Windows it raises. Skipping the sync there costs the
+    durability guarantee on that platform, which is honest; raising would
+    cost the snapshot itself, which is worse.
+    """
+    try:
+        descriptor = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        pass
+    finally:
+        os.close(descriptor)
+
+
 def write_snapshot(snapshot: Snapshot) -> Path:
     """Write *snapshot* where nothing can overwrite it, and say where.
 
@@ -110,6 +131,13 @@ def write_snapshot(snapshot: Snapshot) -> Path:
     try:
         with os.fdopen(handle, "w") as writer:
             writer.write(snapshot.model_dump_json(indent=2))
+            # On disk before it is linked, not merely in the page cache. A
+            # snapshot cannot be refetched, so a host that loses power after
+            # this function returned would otherwise lose an observation the
+            # collector already reported as written — and the CLI would have
+            # exited 0 saying so.
+            writer.flush()
+            os.fsync(writer.fileno())
 
         path = directory / f"{stamp}.json"
         suffix = 1
@@ -121,6 +149,7 @@ def write_snapshot(snapshot: Snapshot) -> Path:
                 # is how two collectors racing inside the same second both
                 # keep their observation rather than one erasing the other.
                 os.link(temporary, path)
+                _sync_directory(directory)
                 return path
             except FileExistsError:
                 suffix += 1

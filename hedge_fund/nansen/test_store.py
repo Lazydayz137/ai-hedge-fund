@@ -179,3 +179,40 @@ def test_a_write_that_dies_midway_leaves_no_file_behind(monkeypatch):
     monkeypatch.undo()
     write_snapshot(snapshot)
     assert read_as_of(SMART_MONEY_HOLDINGS, MONDAY) is not None
+
+
+def test_the_bytes_are_on_disk_before_the_name_appears(monkeypatch):
+    """Ordering, not just presence: fsync of the file must precede the link.
+
+    Reversed, a host that lost power between them would leave a published
+    name pointing at bytes that never landed — a snapshot the collector
+    already reported as written, and which cannot be refetched.
+    """
+    order: list[str] = []
+    real_fsync, real_link = os.fsync, os.link
+
+    monkeypatch.setattr(os, "fsync", lambda fd: (order.append("fsync"), real_fsync(fd))[1])
+    monkeypatch.setattr(os, "link", lambda src, dst: (order.append("link"), real_link(src, dst))[1])
+
+    write_snapshot(_snapshot(MONDAY))
+
+    assert order[0] == "fsync", order
+    assert "link" in order
+    assert order.index("fsync") < order.index("link")
+
+
+def test_a_platform_that_will_not_sync_a_directory_still_publishes(monkeypatch):
+    """Windows cannot open a directory read-only. Losing the durability
+    guarantee there is honest; losing the snapshot would not be."""
+    real_open = os.open
+
+    def refuse_directories(path, flags, *args, **kwargs):
+        if os.path.isdir(path):
+            raise PermissionError("directories are not openable here")
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", refuse_directories)
+
+    path = write_snapshot(_snapshot(MONDAY))
+    assert path.exists()
+    assert read_as_of(SMART_MONEY_HOLDINGS, MONDAY) is not None
