@@ -39,6 +39,7 @@ from hedge_fund.backtesting import backtest_fund
 from hedge_fund.brokers import SimBroker
 from hedge_fund.data import CachedDataClient, FDClient
 from hedge_fund.fund import Fund, load_spec, normalize_universe
+from hedge_fund.ledger import latest_run, resume_broker, save_run
 from hedge_fund.paths import ensure_mandates_dir
 from hedge_fund.pipeline import run_cycle
 from hedge_fund.tui.keys import apply_credentials
@@ -85,6 +86,12 @@ def main() -> None:
         help="LLM the investor agents reason with, e.g. claude-opus-5 "
         "(default: HEDGE_FUND_LLM_MODEL env, else the built-in default); quant models "
         "ignore it",
+    )
+    parser.add_argument(
+        "--fresh", action="store_true",
+        help="start from the mandate's capital instead of resuming the book "
+        "this fund last held; by default a run continues where the previous "
+        "one left off, so NAV is a track record and not a fresh start",
     )
     parser.add_argument("--out", help="also write the record JSON to this file")
     args = parser.parse_args()
@@ -133,7 +140,13 @@ def main() -> None:
         )
         return
 
-    broker = SimBroker(cash=spec.capital)
+    prior = None if args.fresh else latest_run(spec.name, as_of=args.date)
+    broker = SimBroker(cash=spec.capital) if prior is None else resume_broker(prior)
+    if prior is not None:
+        console.print(
+            f"[dim]  resuming {spec.name} from its {prior.as_of} book — "
+            f"{len(prior.positions)} positions, ${prior.cash:,.2f} cash[/]"
+        )
 
     with FDClient() as raw:
         fd = CachedDataClient(raw)
@@ -147,6 +160,7 @@ def main() -> None:
             record = run_cycle(fund, args.date, broker, fd, universe)
 
     print(record.model_dump_json(indent=2))
+    receipt = save_run(record)
     if args.out:
         Path(args.out).write_text(record.model_dump_json(indent=2))
 
@@ -163,6 +177,7 @@ def main() -> None:
         f"{len(record.clamps)} risk clamps  ·  "
         f"{len(record.orders)} orders  ·  NAV ${record.nav:,.2f}"
     )
+    console.print(f"[dim]  book saved to {receipt} — the next run resumes from it[/]")
     if record.skipped:
         console.print(f"[dim]skipped: {', '.join(s.ticker for s in record.skipped)}[/]")
 
