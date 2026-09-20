@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from hedge_fund.hl.client import HLClient, HLClientError
-from hedge_fund.hl.models import MarketSnapshot, PerpMarketRow, ScopeFailure, SpotMarketRow
+from hedge_fund.hl.models import DexConfig, MarketSnapshot, PerpMarketRow, ScopeFailure, SpotMarketRow
 
 
 def collect_snapshot(client: HLClient | None = None) -> MarketSnapshot:
@@ -38,13 +38,34 @@ def collect_snapshot(client: HLClient | None = None) -> MarketSnapshot:
         except HLClientError as exc:
             failures.append(ScopeFailure(scope="native", error=str(exc)))
 
+        dexes: list[DexConfig] = []
+        dex_names: list[str] = []
         try:
             dexs = client.perp_dexs()
             raw["perp_dexs"] = dexs
-            dex_names = [d["name"] for d in dexs if d is not None]
+            for index, entry in enumerate(dexs):
+                if entry is None:
+                    continue  # native book: no builder, no config
+                try:
+                    name = entry["name"]
+                except (KeyError, TypeError) as exc:
+                    # Without a name there's nothing to request market data
+                    # for either -- this costs the DEX's instruments too.
+                    failures.append(ScopeFailure(scope=f"perp_dexs[{index}]", error=str(exc)))
+                    continue
+                dex_names.append(name)
+                try:
+                    dexes.append(_parse_dex_config(entry))
+                except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                    # The config didn't parse, but the market data is still
+                    # worth having -- dropping real observations over one
+                    # malformed multiplier would be the worse trade, and
+                    # carrying forward the last pass's config would mean
+                    # writing down terms that were never actually observed
+                    # this pass.
+                    failures.append(ScopeFailure(scope=f"{name} (config)", error=str(exc)))
         except HLClientError as exc:
             failures.append(ScopeFailure(scope="perp_dexs", error=str(exc)))
-            dex_names = []
 
         for name in dex_names:
             try:
@@ -65,6 +86,7 @@ def collect_snapshot(client: HLClient | None = None) -> MarketSnapshot:
             observed_at=observed_at,
             perp_rows=perp_rows,
             spot_rows=spot_rows,
+            dexes=dexes,
             failures=failures,
             raw=raw,
         )
@@ -86,6 +108,9 @@ def _parse_perp_rows(payload: list, *, dex: str, observed_at: datetime) -> list[
             max_leverage=u["maxLeverage"],
             margin_table_id=u.get("marginTableId"),
             only_isolated=u.get("onlyIsolated"),
+            deployer_fee_scale=_opt_float(u.get("deployerFeeScale")),
+            growth_mode=u.get("growthMode"),
+            last_fee_scale_change_time=u.get("lastFeeScaleChangeTime"),
             funding=float(c["funding"]),
             open_interest=float(c["openInterest"]),
             prev_day_px=float(c["prevDayPx"]),
@@ -131,6 +156,32 @@ def _parse_spot_rows(payload: list, *, observed_at: datetime) -> list[SpotMarket
             total_supply=_opt_float(c.get("totalSupply")),
         ))
     return rows
+
+
+def _parse_dex_config(entry: dict) -> DexConfig:
+    """Build one builder DEX's config from its perp_dexs entry.
+
+    Raises rather than returning a partial config: a half-read config is a
+    config nobody can trust a funding number against.
+    """
+    return DexConfig(
+        name=entry["name"],
+        full_name=entry.get("fullName"),
+        deployer=entry.get("deployer"),
+        oracle_updater=entry.get("oracleUpdater"),
+        # [[action, [address, ...]], ...] -- who may do what to this DEX.
+        sub_deployers={action: list(addrs) for action, addrs in (entry.get("subDeployers") or [])},
+        fee_recipient=entry.get("feeRecipient"),
+        asset_to_funding_multiplier=_pairs(entry.get("assetToFundingMultiplier")),
+        asset_to_funding_interest_rate=_pairs(entry.get("assetToFundingInterestRate")),
+        asset_to_funding_clamp=_pairs(entry.get("assetToFundingClamp")),
+        asset_to_streaming_oi_cap=_pairs(entry.get("assetToStreamingOiCap")),
+    )
+
+
+def _pairs(raw: object) -> dict[str, float]:
+    """Turn one of the venue's [[key, "1.5"], ...] assoc-lists into a dict."""
+    return {key: float(value) for key, value in (raw or [])}
 
 
 def _opt_float(value: object) -> float | None:

@@ -25,7 +25,7 @@ def main() -> None:
     print(f"wrote {path}")
     print(
         f"perp native={n_native} hip3={n_hip3} spot={n_spot} "
-        f"failures={len(snapshot.failures)}"
+        f"dex_configs={len(snapshot.dexes)} failures={len(snapshot.failures)}"
     )
     for failure in snapshot.failures:
         print(f"  FAILED {failure.scope}: {failure.error}", file=sys.stderr)

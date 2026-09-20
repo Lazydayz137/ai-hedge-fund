@@ -29,6 +29,18 @@ class PerpMarketRow(BaseModel):
     max_leverage: int
     margin_table_id: int | None = None
     only_isolated: bool | None = None
+    # Per-instrument builder settings that can change under a live position:
+    # deployer_fee_scale multiplies the builder's cut of the fee, growth_mode
+    # is the venue's own regime label. Both are kept because a row that
+    # cannot say what regime it was taken under cannot be reinterpreted once
+    # the regime moves.
+    deployer_fee_scale: float | None = None
+    growth_mode: str | None = None
+    # The venue's own answer to "when did the fee last move", verbatim: a
+    # naive local-format timestamp, no zone, unlike observed_at. Left as the
+    # string it arrives as rather than coerced into a UTC instant it does
+    # not claim to be.
+    last_fee_scale_change_time: str | None = None
 
     funding: float
     open_interest: float
@@ -72,6 +84,115 @@ class ScopeFailure(BaseModel):
     error: str
 
 
+class DexConfig(BaseModel):
+    """One builder-deployed DEX's settings at the time of a pass.
+
+    Recorded per pass rather than copied onto all its observation rows.
+    A HIP-3 market's terms are set by its builder and can move: the
+    addresses allowed to post its oracle, the multiplier and interest rate
+    that turn a premium into the funding actually charged, the open-interest
+    caps that bound a position. A funding rate recorded without the
+    multiplier that produced it is a number nobody can reinterpret later,
+    and if a builder changes either, every earlier observation silently
+    means something else. Nothing else is writing this down.
+
+    Only builder DEXs appear here. Hyperliquid's own book has no entry in
+    perpDexs at all -- the endpoint returns a literal null in its place --
+    so a native pass has no config row, rather than an empty one that would
+    read like a builder that set nothing.
+
+    Per-instrument maps are keyed by the full namespaced instrument name
+    ("xyz:NVDA"), so they join to PerpMarketRow.name directly.
+    """
+
+    name: str
+    full_name: str | None = None
+    deployer: str | None = None
+
+    # The address posting this DEX's oracle -- null on most of them,
+    # including the largest by open interest. sub_deployers is what
+    # actually answers "who could post the oracle": its setOracle entry
+    # names the authorized addresses, and it is populated where
+    # oracle_updater is not. Oracle manipulation is the demonstrated attack
+    # on this market class, so both are kept, and neither is inferred from
+    # the other.
+    oracle_updater: str | None = None
+    sub_deployers: dict[str, list[str]] = {}
+
+    fee_recipient: str | None = None
+
+    # Funding inputs, per instrument. The venue computes funding from the
+    # premium, the interest rate, and the multiplier; recording the rate
+    # alone would be recording an output whose inputs are gone.
+    asset_to_funding_multiplier: dict[str, float] = {}
+    asset_to_funding_interest_rate: dict[str, float] = {}
+    asset_to_funding_clamp: dict[str, float] = {}
+
+    # Notional open-interest ceiling per instrument -- the size bound on
+    # any position taken against it.
+    asset_to_streaming_oi_cap: dict[str, float] = {}
+
+
+class BuilderFillSidecar(BaseModel):
+    """Immutable record accompanying one archived builder-fill data file.
+
+    Describes the ORIGINAL compressed bytes stored beside it (never the
+    decompressed content), so the sidecar alone is enough to verify the
+    archived file later without re-fetching or re-decompressing it.
+    """
+
+    builder: str
+    date: str  # YYYY-MM-DD, the day the file COVERS, not the fetch day
+    fetched_at: datetime  # UTC, when this fetch happened
+    byte_length: int
+    sha256: str
+    http_status: int
+
+
+class BuilderFillRow(BaseModel):
+    """One parsed row from a builder's daily fill CSV.
+
+    Field names and order mirror the real CSV header verbatim, confirmed
+    live against https://stats-data.hyperliquid.xyz on 2026-09-19:
+    time,user,coin,side,px,sz,crossed,special_trade_type,tif,is_trigger,
+    counterparty,closed_pnl,twap_id,builder_fee
+    """
+
+    time: datetime
+    user: str
+    coin: str
+    side: str
+    px: float
+    sz: float
+    crossed: bool
+    special_trade_type: str
+    tif: str
+    is_trigger: bool
+    counterparty: str
+    closed_pnl: float
+    twap_id: int
+    builder_fee: float
+
+
+class FillFetchResult(BaseModel):
+    """Outcome of one (builder, date) archive attempt.
+
+    "new": first time this date's content was archived for this builder.
+    "unchanged": identical bytes already archived -- a no-op, nothing written.
+    "restated": a DIFFERENT hash for an already-archived date -- a new
+      version was written beside the old one rather than replacing it; a
+      restated file is itself information and must not be merged away.
+    "failed": the fetch didn't return real data (network error or non-200,
+      e.g. a day that hasn't published yet); no data file was written.
+    """
+
+    builder: str
+    date: str
+    status: str
+    path: str | None = None
+    detail: str | None = None
+
+
 class MarketSnapshot(BaseModel):
     """Everything one collection pass saw, real data only.
 
@@ -92,5 +213,10 @@ class MarketSnapshot(BaseModel):
     observed_at: datetime
     perp_rows: list[PerpMarketRow] = []
     spot_rows: list[SpotMarketRow] = []
+    # One entry per builder-deployed DEX; none for the native book, which
+    # the venue exposes no config for. A DEX whose config would not parse
+    # has no entry here and a ScopeFailure instead -- never a stale one
+    # carried forward from an earlier pass.
+    dexes: list[DexConfig] = []
     failures: list[ScopeFailure] = []
     raw: dict[str, Any] = {}

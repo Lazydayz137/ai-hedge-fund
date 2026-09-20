@@ -3,7 +3,17 @@
   {
     "name": "xyz",
     "fullName": "XYZ",
-    "deployer": "0x88806a71d74ad0a510b350545c9ae490912f0888"
+    "deployer": "0x88806a71d74ad0a510b350545c9ae490912f0888",
+    "oracleUpdater": null,
+    "feeRecipient": "0x83ffcfb1f2ad843c474b2e28df86c721cb869d3a",
+    "subDeployers": [
+      ["registerAsset", ["0x7d16f116d252db609c56d27d6c9605eb03e16657", "0x8c4190018486a2dbac2629d688136e8990170ff2"]],
+      ["setOracle", ["0x1234567890545d1df9ee64b35fdd16966e08acec"]]
+    ],
+    "assetToFundingMultiplier": [["xyz:TSLA", "0.5"], ["xyz:XYZ100", "0.5"]],
+    "assetToFundingInterestRate": [],
+    "assetToFundingClamp": [],
+    "assetToStreamingOiCap": [["xyz:TSLA", "100000000.0"], ["xyz:XYZ100", "1000000000.0"]]
   },
   {
     "name": "flx",

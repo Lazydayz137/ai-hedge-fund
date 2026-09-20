@@ -33,10 +33,12 @@ pydantic = "^2.4.2"
 scipy = "^1.11.0"
 pyyaml = "^6.0.3"
 textual = "^8.2.8"
+lz4 = "^4.4.5"
 
 [tool.poetry.scripts]
 aihf = "hedge_fund.run:main"
 hl-collect = "hedge_fund.hl.cli:main"
+hl-collect-fills = "hedge_fund.hl.fills_cli:main"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"

@@ -98,6 +98,91 @@ def test_spot_rows_join_by_index_not_position():
     assert row.circulating_supply == 184467440737.0535888672
 
 
+def test_builder_config_is_recorded_once_per_pass():
+    snap = collect_snapshot(FakeClient(
+        dexs=PERP_DEXS,
+        dex_payloads={d["name"]: HIP3_XYZ for d in PERP_DEXS if d},
+    ))
+    xyz = next(d for d in snap.dexes if d.name == "xyz")
+    assert xyz.full_name == "XYZ"
+    assert xyz.deployer == "0x88806a71d74ad0a510b350545c9ae490912f0888"
+    assert xyz.fee_recipient == "0x83ffcfb1f2ad843c474b2e28df86c721cb869d3a"
+    assert len(snap.dexes) == len([d for d in PERP_DEXS if d])
+
+
+def test_native_book_gets_no_config_entry():
+    """The venue sends a literal null for its own book, not an empty config."""
+    snap = collect_snapshot(FakeClient(dexs=PERP_DEXS, dex_payloads={d["name"]: HIP3_XYZ for d in PERP_DEXS if d}))
+    assert "" not in [d.name for d in snap.dexes]
+
+
+def test_who_could_post_the_oracle_is_kept_even_when_oracle_updater_is_null():
+    """oracleUpdater is null on xyz; subDeployers.setOracle is not."""
+    snap = collect_snapshot(FakeClient(
+        dexs=PERP_DEXS,
+        dex_payloads={d["name"]: HIP3_XYZ for d in PERP_DEXS if d},
+    ))
+    xyz = next(d for d in snap.dexes if d.name == "xyz")
+    assert xyz.oracle_updater is None
+    assert xyz.sub_deployers["setOracle"] == ["0x1234567890545d1df9ee64b35fdd16966e08acec"]
+    assert len(xyz.sub_deployers["registerAsset"]) == 2
+
+
+def test_funding_inputs_and_oi_caps_join_to_instruments_by_name():
+    snap = collect_snapshot(FakeClient(
+        dexs=PERP_DEXS,
+        dex_payloads={d["name"]: HIP3_XYZ for d in PERP_DEXS if d},
+    ))
+    xyz = next(d for d in snap.dexes if d.name == "xyz")
+    xyz100 = next(r for r in snap.perp_rows if r.name == "xyz:XYZ100")
+    assert xyz.asset_to_funding_multiplier[xyz100.name] == 0.5
+    assert xyz.asset_to_streaming_oi_cap[xyz100.name] == 1000000000.0
+    # Absent maps stay empty rather than being invented from a default.
+    assert xyz.asset_to_funding_interest_rate == {}
+    assert xyz.asset_to_funding_clamp == {}
+
+
+def test_per_instrument_builder_settings_are_recorded():
+    snap = collect_snapshot(FakeClient(
+        dexs=PERP_DEXS,
+        dex_payloads={d["name"]: HIP3_XYZ for d in PERP_DEXS if d},
+    ))
+    xyz100 = next(r for r in snap.perp_rows if r.name == "xyz:XYZ100")
+    assert xyz100.deployer_fee_scale == 1.0
+    assert xyz100.growth_mode == "enabled"
+    assert xyz100.margin_table_id == 30
+    # Kept as the venue's own naive string, not coerced to a UTC instant.
+    assert xyz100.last_fee_scale_change_time == "2025-11-23T17:37:10.033211662"
+
+
+def test_unparseable_config_costs_the_config_not_the_market_data():
+    dexs = json.loads(json.dumps(PERP_DEXS))
+    xyz = next(d for d in dexs if d and d["name"] == "xyz")
+    xyz["assetToFundingMultiplier"] = [["xyz:XYZ100", "not-a-number"]]
+
+    snap = collect_snapshot(FakeClient(dexs=dexs, dex_payloads={d["name"]: HIP3_XYZ for d in dexs if d}))
+
+    assert "xyz" not in {d.name for d in snap.dexes}
+    assert any(f.scope == "xyz (config)" for f in snap.failures)
+    assert "xyz:XYZ100" in {r.name for r in snap.perp_rows}  # market data still collected
+
+
+def test_nameless_dex_entry_costs_its_instruments_too():
+    """Without a name there is nothing to request."""
+    dexs = json.loads(json.dumps(PERP_DEXS))
+    xyz_index = next(i for i, d in enumerate(dexs) if d and d["name"] == "xyz")
+    del dexs[xyz_index]["name"]
+
+    snap = collect_snapshot(FakeClient(
+        dexs=dexs,
+        dex_payloads={d["name"]: HIP3_XYZ for d in dexs if d and "name" in d},
+    ))
+
+    assert "xyz" not in {d.name for d in snap.dexes}
+    assert not [r for r in snap.perp_rows if r.dex == "xyz"]
+    assert any(f.scope == f"perp_dexs[{xyz_index}]" for f in snap.failures)
+
+
 def test_failed_dex_writes_no_rows_but_others_still_run():
     snap = collect_snapshot(FakeClient(
         dexs=[None, {"name": "xyz"}, {"name": "flx"}],
