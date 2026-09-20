@@ -7,6 +7,10 @@ from hedge_fund import paths
 
 load_dotenv()
 
+# One fixture per archive rather than one that redirects them all: each is
+# owned by the module that writes to it, and a module that never writes
+# should not be able to silently depend on someone else's redirect.
+
 
 @pytest.fixture(autouse=True)
 def _isolate_user_dir(tmp_path, monkeypatch):
@@ -18,3 +22,15 @@ def _isolate_user_dir(tmp_path, monkeypatch):
     suite both destructive and order-dependent.
     """
     monkeypatch.setattr(paths, "MANDATES_DIR", tmp_path / "mandates")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_nansen_dir(tmp_path, monkeypatch):
+    """Point the Nansen snapshot archive at a scratch dir for every test.
+
+    Snapshots are written with open(..., "x") and are meant to be
+    permanent. Without this, a test that collects a round would drop files
+    into the user's own archive, where they would be indistinguishable
+    from real observations and could never be safely deleted in bulk.
+    """
+    monkeypatch.setattr(paths, "NANSEN_DIR", tmp_path / "nansen-snapshots")

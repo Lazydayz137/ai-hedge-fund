@@ -17,6 +17,11 @@ from pathlib import Path
 USER_DIR = Path.home() / ".hedge-fund"
 MANDATES_DIR = USER_DIR / "mandates"
 CACHE_DIR = USER_DIR / "cache"
+# Nansen label snapshots are an archive, not a cache: the smart-money set
+# is continuously recomputed, so a snapshot missed on the day it was true
+# cannot be refetched later at any price. Kept out of CACHE_DIR so that
+# clearing the cache can never take the archive with it.
+NANSEN_DIR = USER_DIR / "nansen-snapshots"
 ENV_PATH = USER_DIR / ".env"
 
 # The example mandate ships inside the package; it is copied out (never read
