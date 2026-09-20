@@ -91,3 +91,41 @@ def test_read_rows_reads_latest_version_by_default():
     original = list(read_rows(BUILDER, DAY, version=1))
     assert len(latest) == 1 and latest[0].px == 85.999  # the restated content
     assert len(original) == 2 and original[0].px == 85.586  # the original content, untouched
+
+
+def test_reversion_to_an_older_hash_is_a_new_restatement_not_a_noop():
+    """A -> B -> A: the third fetch's hash matches an OLDER archived
+    version (v1), not the latest (v2). It must be recorded as a new
+    restatement, not silently treated as unchanged just because some past
+    version happens to match."""
+    save_raw(BUILDER, DAY, body=FIXTURE, http_status=200, fetched_at=FETCHED_AT)  # A -> v1
+    try:
+        save_raw(BUILDER, DAY, body=RESTATED_BODY, http_status=200, fetched_at=FETCHED_AT)  # B -> v2
+    except RestatedFile:
+        pass
+
+    with pytest.raises(RestatedFile) as exc_info:
+        save_raw(BUILDER, DAY, body=FIXTURE, http_status=200, fetched_at=FETCHED_AT)  # A again -> v3
+
+    new_path = exc_info.value.path
+    assert new_path.name == "20260918-v3.csv.lz4"
+    latest = list(read_rows(BUILDER, DAY))
+    assert latest[0].px == 85.586  # back to A's content, not stuck reporting B
+
+
+def test_orphaned_sidecar_without_data_is_reclaimed_not_wedged():
+    """A crash between reserving a version slot (sidecar written) and
+    publishing its data file leaves a sidecar with no matching data file.
+    The next save targeting that same slot must reclaim it, not raise or
+    leave the pass permanently stuck on a dead reservation."""
+    first = save_raw(BUILDER, DAY, body=FIXTURE, http_status=200, fetched_at=FETCHED_AT)
+    orphan_sidecar = first.parent / "20260918-v2.csv.lz4.json"
+    orphan_sidecar.write_text("{}", encoding="utf-8")  # crash artifact, no data file
+
+    with pytest.raises(RestatedFile) as exc_info:
+        save_raw(BUILDER, DAY, body=RESTATED_BODY, http_status=200, fetched_at=FETCHED_AT)
+
+    new_path = exc_info.value.path
+    assert new_path.name == "20260918-v2.csv.lz4"
+    assert new_path.exists()
+    assert new_path.with_name(new_path.name + ".json").read_text(encoding="utf-8") != "{}"

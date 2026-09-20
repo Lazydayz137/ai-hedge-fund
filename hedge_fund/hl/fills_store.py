@@ -12,6 +12,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import uuid
 from datetime import date, datetime
 from pathlib import Path
 
@@ -67,49 +68,86 @@ class RestatedFile(Exception):
         self.previous = previous
 
 
+_MAX_VERSION_ATTEMPTS = 8
+
+
 def save_raw(
     builder: str, day: date, *, body: bytes, http_status: int, fetched_at: datetime,
 ) -> Path | None:
     """Archive one fetch's raw bytes.
 
-    Returns the path written, or None if this exact content is already
-    archived (no-op). Raises RestatedFile -- after writing the new
-    version -- if *day* was already archived under a different hash.
+    Returns the path written, or None if this exact content matches the
+    LATEST archived version already (no-op) -- a hash that only matches an
+    OLDER, superseded version is a genuine restatement, not a no-op (an
+    A -> B -> A sequence must record the second A, not silently agree with
+    the first). Raises RestatedFile -- after writing the new version -- if
+    *day* was already archived under a different hash than its latest.
+
+    Concurrency-safe for two collectors racing the same (builder, day): the
+    sidecar's exclusive creation is the reservation for a version slot, so
+    a race collides there (and retries against a rescan) rather than on the
+    data file, and a data file is never visible via _versions() before its
+    sidecar is committed.
     """
     builder = builder.lower()
     sha256 = hashlib.sha256(body).hexdigest()
-    existing = _versions(builder, day)
-
-    latest_sidecar = None
-    for path in existing:
-        sidecar = _load_sidecar(path)
-        if sidecar is None:
-            continue
-        if sidecar.sha256 == sha256:
-            return None  # identical content already archived: no-op
-        latest_sidecar = sidecar
-
     directory = _builder_dir(builder)
     directory.mkdir(parents=True, exist_ok=True)
     stem = day.strftime("%Y%m%d")
-    data_path = (
-        directory / f"{stem}.csv.lz4" if not existing
-        else directory / f"{stem}-v{len(existing) + 1}.csv.lz4"
+
+    for _ in range(_MAX_VERSION_ATTEMPTS):
+        existing = _versions(builder, day)
+        latest_sidecar = _load_sidecar(existing[-1]) if existing else None
+        if latest_sidecar is not None and latest_sidecar.sha256 == sha256:
+            return None  # unchanged from the latest archived version: no-op
+
+        data_path = (
+            directory / f"{stem}.csv.lz4" if not existing
+            else directory / f"{stem}-v{len(existing) + 1}.csv.lz4"
+        )
+        sidecar_path = _sidecar_path(data_path)
+        sidecar = BuilderFillSidecar(
+            builder=builder, date=day.isoformat(), fetched_at=fetched_at,
+            byte_length=len(body), sha256=sha256, http_status=http_status,
+        )
+
+        try:
+            with sidecar_path.open("x", encoding="utf-8") as handle:
+                handle.write(sidecar.model_dump_json(indent=2))
+        except FileExistsError:
+            if not data_path.exists():
+                # A sidecar with no matching data file can only be a crash
+                # artifact from between this reservation and the write
+                # below (never a live writer -- a live writer either hasn't
+                # reserved yet, in which case we'd have won, or has already
+                # published the data file too). Reclaim the slot rather
+                # than wedge on it forever.
+                # ponytail: doesn't distinguish that from two hosts sharing
+                # one archive dir without synchronized clocks; add a
+                # heartbeat/lease if that setup shows up.
+                sidecar_path.unlink(missing_ok=True)
+            continue  # rescan and reselect a slot
+
+        # Exclusive creation: never overwrite an existing snapshot of this
+        # file. The sidecar reservation above guarantees data_path itself
+        # is ours alone to create.
+        tmp_path = data_path.with_name(f"{data_path.name}.{uuid.uuid4().hex[:8]}.tmp")
+        try:
+            with tmp_path.open("xb") as handle:
+                handle.write(body)
+            tmp_path.replace(data_path)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            sidecar_path.unlink(missing_ok=True)
+            raise
+
+        if latest_sidecar is not None:
+            raise RestatedFile(data_path, latest_sidecar)
+        return data_path
+
+    raise RuntimeError(
+        f"could not claim a version slot for {builder} {day} after {_MAX_VERSION_ATTEMPTS} attempts"
     )
-
-    # Exclusive creation: never overwrite an existing snapshot of this file.
-    with data_path.open("xb") as handle:
-        handle.write(body)
-
-    sidecar = BuilderFillSidecar(
-        builder=builder, date=day.isoformat(), fetched_at=fetched_at,
-        byte_length=len(body), sha256=sha256, http_status=http_status,
-    )
-    _sidecar_path(data_path).write_text(sidecar.model_dump_json(indent=2), encoding="utf-8")
-
-    if latest_sidecar is not None:
-        raise RestatedFile(data_path, latest_sidecar)
-    return data_path
 
 
 def read_rows(builder: str, day: date, *, version: int | None = None):
