@@ -2,8 +2,9 @@
 
 A `FundamentalsSnapshot` is everything an investor agent is allowed to know
 about a company as of a given date: a history of financial metrics (each row
-provably public by `as_of` — the data layer filters on filing_date, not
-report_period) plus a few derived aggregates computed here in Python so the
+provably public BEFORE `as_of` — the data layer filters on filing_date, not
+report_period, and `build_snapshot` drops the same-day edge) plus a few
+derived aggregates computed here in Python so the
 LLM reasons over facts instead of re-deriving arithmetic.
 
 The snapshot is pure data: build it once, hash it, feed it to any persona.
@@ -123,13 +124,25 @@ def build_snapshot(
 ) -> FundamentalsSnapshot:
     """Build the point-in-time snapshot for (ticker, as_of).
 
-    Raises InsufficientData if fewer than MIN_PERIODS filed periods exist.
+    Raises InsufficientData if fewer than MIN_PERIODS periods were filed
+    STRICTLY before *as_of*.
     Data-layer failures propagate (fail loud) — a broken snapshot must never
     silently become a neutral view.
     """
     metrics = data_client.get_financial_metrics(
         ticker, as_of, period="ttm", limit=periods,
     )
+    # The data layer filters `filing_date <= as_of`, which admits a filing
+    # dated as_of itself. A cycle marks and fills at the as-of close and SEC
+    # filings are routinely accepted after it, so a same-day row is not
+    # provably public at the price we trade — same lookahead the PEAD model
+    # guards against. Rows with no filing_date never reach here (the data
+    # layer drops them server-side); leave any such row alone rather than
+    # silently reinterpreting missing metadata.
+    metrics = [
+        m for m in metrics
+        if m.filing_date is None or m.filing_date[:10] < as_of[:10]
+    ]
     if len(metrics) < MIN_PERIODS:
         raise InsufficientData(
             f"{ticker} as of {as_of}: only {len(metrics)} filed periods "
