@@ -34,6 +34,13 @@ def _daterange(start: date, end: date):
         day += timedelta(days=1)
 
 
+def _non_negative_float(value: str) -> float:
+    parsed = float(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(f"--delay must be >= 0, got {value!r}")
+    return parsed
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -49,7 +56,7 @@ def main() -> None:
         help="builder address to fetch; repeatable. Overrides the configured list.",
     )
     parser.add_argument(
-        "--delay", type=float, default=1.0,
+        "--delay", type=_non_negative_float, default=1.0,
         help="seconds to sleep between requests (default: 1.0)",
     )
     args = parser.parse_args()
