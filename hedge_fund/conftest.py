@@ -45,6 +45,16 @@ def _user_dir_contents() -> set:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_archive_dir(tmp_path, monkeypatch):
+    """Point the archive dir at a scratch dir for every test.
+
+    Without this, any test that saves a Hyperliquid snapshot would write
+    into the user's own ~/.hedge-fund/archive.
+    """
+    monkeypatch.setattr(paths, "ARCHIVE_DIR", tmp_path / "archive")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_user_dir(tmp_path, monkeypatch):
     """Point the fund directory at a scratch dir for every test.
 

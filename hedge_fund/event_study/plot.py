@@ -13,6 +13,19 @@ fig.savefig() or plt.show().
 
 from __future__ import annotations
 
+import matplotlib
+
+# These functions only ever build a Figure for fig.savefig() — nothing here
+# calls plt.show(). Force the non-interactive Agg backend so we never touch a
+# GUI toolkit: on this box (and any other Windows/headless/CI host without a
+# working Tk install) matplotlib's "auto" backend resolution picks TkAgg
+# just because tkinter imports cleanly, then crashes — intermittently, since
+# it depends on the local Tcl/Tk data files being readable at the moment a
+# Tk() window is instantiated — the very first time any test in the process
+# creates a figure. Setting the backend here, before pyplot is imported
+# anywhere, makes every caller (tests, CLI, notebooks) go through Agg.
+matplotlib.use("Agg")
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
