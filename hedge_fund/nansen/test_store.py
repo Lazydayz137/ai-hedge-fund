@@ -164,11 +164,22 @@ def test_a_write_that_dies_midway_leaves_no_file_behind(monkeypatch):
     suffix.
     """
     snapshot = _snapshot(MONDAY)
+    real = Snapshot.model_dump_json
+    failed_once = False
 
-    def explode(self, **kwargs):
-        raise RuntimeError("connection reset mid-serialization")
+    def explode_once(self, **kwargs):
+        # One-shot rather than monkeypatch.undo(): the autouse fixture that
+        # redirects the archive shares this test's monkeypatch instance, so
+        # undo() would put NANSEN_DIR back to the user's real archive and the
+        # write below would land in it. A test for not corrupting the archive
+        # must not be the thing that writes to it.
+        nonlocal failed_once
+        if not failed_once:
+            failed_once = True
+            raise RuntimeError("connection reset mid-serialization")
+        return real(self, **kwargs)
 
-    monkeypatch.setattr(Snapshot, "model_dump_json", explode)
+    monkeypatch.setattr(Snapshot, "model_dump_json", explode_once)
     with pytest.raises(RuntimeError):
         write_snapshot(snapshot)
 
@@ -176,7 +187,6 @@ def test_a_write_that_dies_midway_leaves_no_file_behind(monkeypatch):
     assert list(directory.glob("*")) == []
 
     # And the archive is still usable afterwards.
-    monkeypatch.undo()
     write_snapshot(snapshot)
     assert read_as_of(SMART_MONEY_HOLDINGS, MONDAY) is not None
 
