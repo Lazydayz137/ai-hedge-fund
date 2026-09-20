@@ -133,6 +133,25 @@ def test_resume_rebases_receipts_that_predate_cost_basis():
     assert broker.positions()["AAPL"].cost_basis == pytest.approx(100.0)
 
 
+def test_resume_refuses_a_position_with_neither_basis_nor_mark():
+    """The zero-basis case the test above exists to avoid, reached the other way.
+
+    run_cycle will not write this receipt — it raises rather than mark a held
+    name it cannot price — but a reader cannot lean on the writer's promise.
+    Booking the whole position as profit on its next sale is a wrong number
+    that looks like a return, so refuse the resume instead.
+    """
+    orphan = _record(positions={"AAPL": 10}, cost_basis={}, marks={"MSFT": 50.0})
+    with pytest.raises(ValueError, match="AAPL"):
+        resume_broker(orphan)
+
+
+def test_resume_keeps_a_basis_of_zero_rather_than_falling_back_to_the_mark():
+    """A recorded basis is a fact about the receipt, falsy or not."""
+    broker = resume_broker(_record(cost_basis={"AAPL": 0.0}, marks={"AAPL": 100.0}))
+    assert broker.positions()["AAPL"].cost_basis == pytest.approx(0.0)
+
+
 def test_resumed_book_realizes_from_the_resume_point():
     broker = resume_broker(_record())  # 10 AAPL at 95
     from hedge_fund.brokers.models import Order

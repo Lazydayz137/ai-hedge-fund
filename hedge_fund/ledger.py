@@ -114,13 +114,30 @@ def resume_broker(
     of zero — would book the entire position as profit the first time it sold,
     which is worse than merely losing the history.
 
+    A position with neither raises. run_cycle refuses to write such a receipt
+    in the first place — it raises rather than mark a held name it cannot
+    price — but that is a guarantee made by the writer, and this is the reader.
+    Receipts outlive the build that wrote them and can be hand-edited or
+    half-repaired, and a basis of zero is exactly the outcome the paragraph
+    above calls worse than losing the history: the first sale books the whole
+    position as profit, silently, in a number someone will read as a return.
+
     Realized P&L is deliberately not carried: each receipt records its own
     cycle's realized gains, and a fund's lifetime total is the sum across its
     receipts. That keeps one number from being restated by every resume.
     """
     held = {t: s for t, s in record.positions.items() if s != 0}
+    unpriced = sorted(held.keys() - record.cost_basis.keys() - record.marks.keys())
+    if unpriced:
+        raise ValueError(
+            f"receipt holds {', '.join(unpriced)} with neither a cost basis nor "
+            f"a mark — cannot resume a book whose entry price is unknown"
+        )
+    # Membership, not `or`: a basis of 0.0 is falsy, and falling through to the
+    # mark on it would quietly re-base a position the receipt did describe.
     basis = {
-        t: record.cost_basis.get(t) or record.marks.get(t, 0.0) for t in held
+        t: record.cost_basis[t] if t in record.cost_basis else record.marks[t]
+        for t in held
     }
     return SimBroker.resume(
         cash=record.cash, positions=held, cost_basis=basis, commission=commission
