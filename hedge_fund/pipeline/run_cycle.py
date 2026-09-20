@@ -110,7 +110,8 @@ def run_cycle(
     orders = build_orders(risk.weights, held, marks, equity_before)
     fills: list[Fill] = [broker.place_order(o) for o in orders]
 
-    positions_after = {t: p.shares for t, p in broker.positions().items()}
+    book = broker.positions()
+    positions_after = {t: p.shares for t, p in book.items()}
     cash_after = broker.cash()
     nav = cash_after + sum(s * marks[t] for t, s in positions_after.items())
 
@@ -130,8 +131,10 @@ def run_cycle(
         orders=orders,
         fills=fills,
         positions=positions_after,
+        cost_basis={t: p.cost_basis for t, p in book.items()},
         cash=cash_after,
         nav=nav,
+        realized_pnl=sum(f.realized_pnl for f in fills),
     )
 
 
