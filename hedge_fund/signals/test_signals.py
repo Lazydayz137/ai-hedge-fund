@@ -111,10 +111,13 @@ class TestPEADPredict:
         """Prior-quarter comparison rows parsed out of a current 8-K are dropped,
         not mistaken for a fresh surprise."""
         # Filing is 100+ days after the report period → retrospective, excluded.
-        # Queried the day AFTER the filing, not on it: the point-in-time cut is
-        # strict, so a same-day query would drop this row before the
-        # retrospective filter ever saw it and the test would pass without
-        # testing anything.
+        # Queried the day AFTER the filing, not on it. Both filters would reject
+        # a same-day row — the retrospective one in _qualifying_events, and then
+        # the strict point-in-time cut in predict — so on the filing date the
+        # assertion held even with the retrospective filter disabled, and the
+        # test proved nothing. A day later the point-in-time cut passes the row
+        # through, leaving the retrospective filter as the only thing that can
+        # make this assertion true.
         fd = MockFDClient([_rec("2025-12-31", "2026-04-13", "BEAT")])
         sig = PEADModel().predict("TEST", "2026-04-14", fd)
         assert sig.value == 0.0
