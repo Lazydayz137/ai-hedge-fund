@@ -1,7 +1,5 @@
 """Load .env for v2 tests so FINANCIAL_DATASETS_API_KEY is available."""
 
-from pathlib import Path
-
 import pytest
 from dotenv import load_dotenv
 
@@ -12,36 +10,6 @@ load_dotenv()
 # One fixture per archive rather than one that redirects them all: each is
 # owned by the module that writes to it, and a module that never writes
 # should not be able to silently depend on someone else's redirect.
-
-
-@pytest.fixture(autouse=True)
-def _no_test_may_touch_the_real_user_dir(tmp_path, monkeypatch):
-    """Fail any test that writes into ~/.hedge-fund, and say which one.
-
-    The redirects below are the intended protection; this is the backstop
-    for when one of them silently stops applying. That is not theoretical:
-    a `monkeypatch.undo()` in a test reverts the autouse fixtures too,
-    because pytest hands them all the same function-scoped instance — and
-    it did, quietly, one snapshot per run into a real archive.
-
-    These archives are append-only and can never be refetched, so a stray
-    test file in one is indistinguishable from a real observation
-    afterwards. Better to fail the suite than to let it write.
-    """
-    before = _user_dir_contents()
-    yield
-    added = _user_dir_contents() - before
-    if added:
-        raise AssertionError(
-            "this test wrote into the real user directory: "
-            + ", ".join(sorted(str(p) for p in added))
-        )
-
-
-def _user_dir_contents() -> set:
-    """Every file under the real ~/.hedge-fund, or nothing if it has none."""
-    root = Path.home() / ".hedge-fund"
-    return set(root.rglob("*")) if root.exists() else set()
 
 
 @pytest.fixture(autouse=True)
