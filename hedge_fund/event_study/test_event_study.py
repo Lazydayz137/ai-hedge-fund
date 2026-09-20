@@ -128,6 +128,23 @@ class TestRetrospectiveFilter:
 
 
 class TestPlots:
+    def test_uses_noninteractive_backend(self):
+        """plot.py must pin Agg so it never touches a GUI toolkit.
+
+        Without the `matplotlib.use("Agg")` pin, matplotlib's "auto" backend
+        resolution picks whatever interactive framework it can import (TkAgg
+        on a Windows box like this one, since tkinter always imports even
+        when its bundled Tcl/Tk data files are broken) the first time any
+        test in the process creates a figure — then crashes intermittently
+        inside tk.Tk() depending on whether those data files happen to be
+        readable at that instant. Fixing it at the source module (the only
+        place in this repo that imports pyplot) makes every caller safe.
+        """
+        import matplotlib
+        import hedge_fund.event_study.plot  # noqa: F401  (import triggers the pin)
+
+        assert matplotlib.get_backend().lower() == "agg"
+
     @pytest.fixture()
     def synthetic_result(self):
         events = []
