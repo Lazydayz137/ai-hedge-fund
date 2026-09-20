@@ -65,6 +65,7 @@ def main() -> None:
     days = list(_daterange(*args.backfill)) if args.backfill else [args.date or _yesterday_utc()]
 
     first = True
+    any_failed = False
     for builder in builders:
         for day in days:
             if not first:
@@ -78,6 +79,13 @@ def main() -> None:
                 print(f"  RESTATED: {result.detail}", file=sys.stderr)
             elif result.status == "failed":
                 print(f"  FAILED: {result.detail}", file=sys.stderr)
+                any_failed = True
+
+    if any_failed:
+        # Every day was attempted and its result printed above -- this only
+        # signals the scheduler that the run was partial, consistent with
+        # cli.py, it doesn't withhold or retry what was collected.
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
