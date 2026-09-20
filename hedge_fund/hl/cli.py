@@ -30,6 +30,12 @@ def main() -> None:
     for failure in snapshot.failures:
         print(f"  FAILED {failure.scope}: {failure.error}", file=sys.stderr)
 
+    if snapshot.failures:
+        # The snapshot is saved and every failure is printed above -- this
+        # only signals the scheduler that the pass was partial, it doesn't
+        # withhold the data collected.
+        raise SystemExit(1)
+
 
 if __name__ == "__main__":
     main()
