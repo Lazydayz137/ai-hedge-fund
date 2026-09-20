@@ -63,8 +63,8 @@ def test_newest_receipt_wins():
     assert loaded.positions == {"AAPL": 25}
 
 
-def test_unreadable_receipt_is_skipped_not_fatal():
-    """A truncated file should cost the resume, not the run."""
+def test_unparseable_receipt_is_skipped_not_fatal():
+    """A truncated file names no as-of date, so it was never a candidate."""
     older = save_run(_record(as_of="2024-06-03"))
     _age(older, 600)
     newer = save_run(_record(as_of="2024-06-10"))
@@ -72,6 +72,21 @@ def test_unreadable_receipt_is_skipped_not_fatal():
     loaded = latest_run("ledger-test")
     assert loaded is not None
     assert loaded.as_of == "2024-06-03"
+
+
+def test_newest_receipt_failing_validation_refuses_to_resume(capsys):
+    """Rewinding to an older book would re-execute trades that already happened.
+
+    The file parses and names a newer date, so it IS the book to resume — it
+    just cannot be loaded. Falling back to 06-03 would hand the fund a book
+    from before a week of fills, and nothing on screen would say so.
+    """
+    _age(save_run(_record(as_of="2024-06-03")), 600)
+    newer = save_run(_record(as_of="2024-06-10"))
+    newer.write_text('{"fund": "ledger-test", "as_of": "2024-06-10"}')
+
+    assert latest_run("ledger-test") is None
+    assert newer.name in capsys.readouterr().err
 
 
 def test_backtest_receipts_are_not_run_receipts():

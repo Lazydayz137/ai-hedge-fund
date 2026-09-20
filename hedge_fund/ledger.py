@@ -15,6 +15,7 @@ may reach back into the UI that happens to share the directory.
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -60,9 +61,16 @@ def latest_run(fund: str, as_of: str | None = None) -> CycleRecord | None:
 
     A receipt is only accepted if it names this fund: the filename can be
     renamed or hand-edited, and resuming the wrong fund's cash and positions
-    would be silent. Unreadable receipts are skipped rather than raised — a
-    truncated file should cost the resume, not the run. Backtest receipts share
-    the directory but not the -run- infix, so they never match.
+    would be silent. Backtest receipts share the directory but not the -run-
+    infix, so they never match.
+
+    If the *newest* eligible receipt turns out to be unreadable, this returns
+    None and says so on stderr rather than falling back to an older one. The
+    older book predates trades that already happened, so resuming it would
+    re-execute them against real cash — quietly, and looking like a normal run.
+    Starting fresh from the mandate is the visible failure; silently rewinding
+    the fund is not. Receipts that fail the cheap peek are still skipped, since
+    one truncated file in a long history should cost the resume, not the run.
     """
     eligible: list[tuple[str, float, Path]] = []
     for path in paths.MANDATES_DIR.glob(f"{fund}-run-*.json"):
@@ -77,12 +85,22 @@ def latest_run(fund: str, as_of: str | None = None) -> CycleRecord | None:
         except (OSError, ValueError, KeyError, TypeError):
             continue
 
-    for _, _, path in sorted(eligible, reverse=True):
-        try:
-            return CycleRecord.model_validate_json(path.read_text())
-        except (OSError, ValueError):
-            continue
-    return None
+    if not eligible:
+        return None
+
+    # mtime breaks ties only: two receipts can share an as-of date when a
+    # cycle is re-run, and the later write is the one that stands.
+    _, _, newest = max(eligible)
+    try:
+        return CycleRecord.model_validate_json(newest.read_text())
+    except (OSError, ValueError) as exc:
+        print(
+            f"ledger: {fund}'s newest receipt {newest.name} is unreadable "
+            f"({exc.__class__.__name__}); not resuming. Fix or move it aside "
+            f"rather than letting this run start from the mandate's capital.",
+            file=sys.stderr,
+        )
+        return None
 
 
 def resume_broker(
