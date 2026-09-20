@@ -41,62 +41,70 @@ def collect_snapshot(client: HLClient | None = None) -> MarketSnapshot:
 
         try:
             native = client.meta_and_asset_ctxs()
-            raw["native"] = native
-            perp_rows.extend(_parse_perp_rows(native, dex="", observed_at=observed_at))
         except HLClientError as exc:
             failures.append(ScopeFailure(scope="native", error=str(exc)))
-        except _PARSE_ERRORS as exc:
-            failures.append(ScopeFailure(scope="native", error=f"unparseable payload: {exc}"))
+        else:
+            raw["native"] = native
+            try:
+                perp_rows.extend(_parse_perp_rows(native, dex="", observed_at=observed_at))
+            except _PARSE_ERRORS as exc:
+                failures.append(ScopeFailure(scope="native", error=f"unparseable payload: {exc}"))
 
         dexes: list[DexConfig] = []
         dex_names: list[str] = []
         try:
             dexs = client.perp_dexs()
-            raw["perp_dexs"] = dexs
-            for index, entry in enumerate(dexs):
-                if entry is None:
-                    continue  # native book: no builder, no config
-                try:
-                    name = entry["name"]
-                except (KeyError, TypeError) as exc:
-                    # Without a name there's nothing to request market data
-                    # for either -- this costs the DEX's instruments too.
-                    failures.append(ScopeFailure(scope=f"perp_dexs[{index}]", error=str(exc)))
-                    continue
-                dex_names.append(name)
-                try:
-                    dexes.append(_parse_dex_config(entry))
-                except (AttributeError, KeyError, TypeError, ValueError) as exc:
-                    # The config didn't parse, but the market data is still
-                    # worth having -- dropping real observations over one
-                    # malformed multiplier would be the worse trade, and
-                    # carrying forward the last pass's config would mean
-                    # writing down terms that were never actually observed
-                    # this pass.
-                    failures.append(ScopeFailure(scope=f"{name} (config)", error=str(exc)))
         except HLClientError as exc:
             failures.append(ScopeFailure(scope="perp_dexs", error=str(exc)))
-        except _PARSE_ERRORS as exc:
-            failures.append(ScopeFailure(scope="perp_dexs", error=f"unparseable payload: {exc}"))
+        else:
+            try:
+                raw["perp_dexs"] = dexs
+                for index, entry in enumerate(dexs):
+                    if entry is None:
+                        continue  # native book: no builder, no config
+                    try:
+                        name = entry["name"]
+                    except (KeyError, TypeError) as exc:
+                        # Without a name there's nothing to request market data
+                        # for either -- this costs the DEX's instruments too.
+                        failures.append(ScopeFailure(scope=f"perp_dexs[{index}]", error=str(exc)))
+                        continue
+                    dex_names.append(name)
+                    try:
+                        dexes.append(_parse_dex_config(entry))
+                    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                        # The config didn't parse, but the market data is still
+                        # worth having -- dropping real observations over one
+                        # malformed multiplier would be the worse trade, and
+                        # carrying forward the last pass's config would mean
+                        # writing down terms that were never actually observed
+                        # this pass.
+                        failures.append(ScopeFailure(scope=f"{name} (config)", error=str(exc)))
+            except _PARSE_ERRORS as exc:
+                failures.append(ScopeFailure(scope="perp_dexs", error=f"unparseable payload: {exc}"))
 
         for name in dex_names:
             try:
                 payload = client.meta_and_asset_ctxs(dex=name)
-                raw[f"dex:{name}"] = payload
-                perp_rows.extend(_parse_perp_rows(payload, dex=name, observed_at=observed_at))
             except HLClientError as exc:
                 failures.append(ScopeFailure(scope=f"dex:{name}", error=str(exc)))
+                continue
+            raw[f"dex:{name}"] = payload
+            try:
+                perp_rows.extend(_parse_perp_rows(payload, dex=name, observed_at=observed_at))
             except _PARSE_ERRORS as exc:
                 failures.append(ScopeFailure(scope=f"dex:{name}", error=f"unparseable payload: {exc}"))
 
         try:
             spot = client.spot_meta_and_asset_ctxs()
-            raw["spot"] = spot
-            spot_rows.extend(_parse_spot_rows(spot, observed_at=observed_at))
         except HLClientError as exc:
             failures.append(ScopeFailure(scope="spot", error=str(exc)))
-        except _PARSE_ERRORS as exc:
-            failures.append(ScopeFailure(scope="spot", error=f"unparseable payload: {exc}"))
+        else:
+            raw["spot"] = spot
+            try:
+                spot_rows.extend(_parse_spot_rows(spot, observed_at=observed_at))
+            except _PARSE_ERRORS as exc:
+                failures.append(ScopeFailure(scope="spot", error=f"unparseable payload: {exc}"))
 
         return MarketSnapshot(
             observed_at=observed_at,
