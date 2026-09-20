@@ -1,0 +1,96 @@
+[
+  {
+    "tokens": [
+      {
+        "name": "USDC",
+        "szDecimals": 8,
+        "weiDecimals": 8,
+        "index": 0,
+        "isCanonical": true
+      },
+      {
+        "name": "PURR",
+        "szDecimals": 0,
+        "weiDecimals": 5,
+        "index": 1,
+        "isCanonical": true
+      }
+    ],
+    "universe": [
+      {
+        "tokens": [1, 0],
+        "name": "PURR/USDC",
+        "index": 0,
+        "isCanonical": true
+      },
+      {
+        "tokens": [479, 0],
+        "name": "@367",
+        "index": 5,
+        "isCanonical": false
+      }
+    ]
+  },
+  [
+    {
+      "prevDayPx": "0.12951",
+      "dayNtlVlm": "1771659.0556800012",
+      "markPx": "0.12123",
+      "midPx": "0.12133",
+      "circulatingSupply": "594888412.0097899437",
+      "coin": "PURR/USDC",
+      "totalSupply": "594888422.3863099813",
+      "dayBaseVlm": "13984310.0"
+    },
+    {
+      "prevDayPx": "1.0",
+      "dayNtlVlm": "0.0",
+      "markPx": "1.0",
+      "midPx": "1.0",
+      "circulatingSupply": "0.0",
+      "coin": "@1",
+      "totalSupply": "0.0",
+      "dayBaseVlm": "0.0"
+    },
+    {
+      "prevDayPx": "1.0",
+      "dayNtlVlm": "0.0",
+      "markPx": "1.0",
+      "midPx": "1.0",
+      "circulatingSupply": "0.0",
+      "coin": "@2",
+      "totalSupply": "0.0",
+      "dayBaseVlm": "0.0"
+    },
+    {
+      "prevDayPx": "1.0",
+      "dayNtlVlm": "0.0",
+      "markPx": "1.0",
+      "midPx": "1.0",
+      "circulatingSupply": "0.0",
+      "coin": "@3",
+      "totalSupply": "0.0",
+      "dayBaseVlm": "0.0"
+    },
+    {
+      "prevDayPx": "1.0",
+      "dayNtlVlm": "0.0",
+      "markPx": "1.0",
+      "midPx": "1.0",
+      "circulatingSupply": "0.0",
+      "coin": "@4",
+      "totalSupply": "0.0",
+      "dayBaseVlm": "0.0"
+    },
+    {
+      "prevDayPx": "0.000633",
+      "dayNtlVlm": "0.0",
+      "markPx": "0.00063",
+      "midPx": "0.000628",
+      "circulatingSupply": "184467440737.0535888672",
+      "coin": "@367",
+      "totalSupply": "184467440737.0535888672",
+      "dayBaseVlm": "0.0"
+    }
+  ]
+]
