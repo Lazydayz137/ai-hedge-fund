@@ -5,8 +5,14 @@ from hedge_fund.hyperliquid.client import (
     HyperliquidClient,
     HyperliquidError,
 )
-from hedge_fund.hyperliquid.collector import collect, read_as_of, save_snapshot
+from hedge_fund.hyperliquid.collector import (
+    collect,
+    read_as_of,
+    read_config,
+    save_snapshot,
+)
 from hedge_fund.hyperliquid.models import (
+    DexConfig,
     MarketSnapshot,
     ObservationError,
     PerpObservation,
@@ -14,6 +20,7 @@ from hedge_fund.hyperliquid.models import (
 
 __all__ = [
     "HYPERLIQUID_INFO_URL",
+    "DexConfig",
     "HyperliquidClient",
     "HyperliquidError",
     "MarketSnapshot",
@@ -21,5 +28,6 @@ __all__ = [
     "PerpObservation",
     "collect",
     "read_as_of",
+    "read_config",
     "save_snapshot",
 ]

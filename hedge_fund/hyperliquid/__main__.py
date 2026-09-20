@@ -58,7 +58,7 @@ def main() -> None:
         f"{snapshot.started_at}  {len(snapshot.observations)} instruments "
         f"({len(snapshot.observations) - len(builder)} native, {len(builder)} HIP-3; "
         f"{len(live)} listed, {len(snapshot.observations) - len(live)} delisted)  "
-        f"{len(snapshot.errors)} errors",
+        f"{len(snapshot.dexes)} builder configs  {len(snapshot.errors)} errors",
         file=sys.stderr,
     )
     for err in snapshot.errors:

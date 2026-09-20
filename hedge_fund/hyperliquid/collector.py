@@ -33,6 +33,7 @@ from hedge_fund.hyperliquid.client import (
     HyperliquidError,
 )
 from hedge_fund.hyperliquid.models import (
+    DexConfig,
     MarketSnapshot,
     ObservationError,
     PerpObservation,
@@ -58,6 +59,32 @@ def _num(raw: object) -> float | None:
     if raw is None:
         return None
     return float(raw)
+
+
+def _pairs(raw: object) -> dict[str, float]:
+    """Turn one of the venue's [[key, "1.5"], ...] assoc-lists into a dict."""
+    return {key: float(value) for key, value in (raw or [])}
+
+
+def read_config(entry: dict) -> DexConfig:
+    """Build one builder DEX's config from its perpDexs entry.
+
+    Raises rather than returning a partial config: a half-read config is a
+    config nobody can trust a funding number against.
+    """
+    return DexConfig(
+        name=entry["name"],
+        full_name=entry.get("fullName"),
+        deployer=entry.get("deployer"),
+        oracle_updater=entry.get("oracleUpdater"),
+        # [[action, [address, ...]], ...] — who may do what to this DEX.
+        sub_deployers={action: list(addrs) for action, addrs in (entry.get("subDeployers") or [])},
+        fee_recipient=entry.get("feeRecipient"),
+        asset_to_funding_multiplier=_pairs(entry.get("assetToFundingMultiplier")),
+        asset_to_funding_interest_rate=_pairs(entry.get("assetToFundingInterestRate")),
+        asset_to_funding_clamp=_pairs(entry.get("assetToFundingClamp")),
+        asset_to_streaming_oi_cap=_pairs(entry.get("assetToStreamingOiCap")),
+    )
 
 
 def observe(asset: dict, ctx: dict, dex: str, observed_at: str) -> PerpObservation:
@@ -90,6 +117,10 @@ def observe(asset: dict, ctx: dict, dex: str, observed_at: str) -> PerpObservati
         sz_decimals=asset.get("szDecimals"),
         margin_mode=asset.get("marginMode"),
         only_isolated=asset.get("onlyIsolated"),
+        margin_table_id=asset.get("marginTableId"),
+        deployer_fee_scale=_num(asset.get("deployerFeeScale")),
+        growth_mode=asset.get("growthMode"),
+        last_fee_scale_change_time=asset.get("lastFeeScaleChangeTime"),
         # Absent on native crypto perps, present and true on the builder
         # markets that have been switched off. Absent reads as listed.
         is_delisted=bool(asset.get("isDelisted", False)),
@@ -99,9 +130,10 @@ def observe(asset: dict, ctx: dict, dex: str, observed_at: str) -> PerpObservati
 def collect(client: HyperliquidClient | None = None) -> MarketSnapshot:
     """Snapshot every perp the venue lists, native and builder-deployed, in one pass.
 
-    Walks perpDexs and then one metaAndAssetCtxs per DEX. A DEX whose call
-    fails costs that DEX's instruments and nothing else; the pass continues
-    and says so in the snapshot's errors.
+    Walks perpDexs — recording each builder DEX's config as it goes — and
+    then one metaAndAssetCtxs per DEX. A DEX whose call fails costs that
+    DEX's instruments and nothing else; the pass continues and says so in
+    the snapshot's errors.
 
     Delisted and empty-book markets are collected like any other. They are
     the interesting ones — six of the ten builder DEXs are currently entirely
@@ -121,9 +153,35 @@ def collect(client: HyperliquidClient | None = None) -> MarketSnapshot:
             snapshot.errors.append(ObservationError(scope="perpDexs", reason=str(exc)))
             return snapshot
 
-        # The null first entry is Hyperliquid's own book; its DEX name is "".
-        names = ["" if entry is None else entry.get("name", "") for entry in dexes]
-        for dex in names:
+        for index, entry in enumerate(dexes):
+            # The null entry is Hyperliquid's own book: no builder, no name,
+            # and no config of any kind. It gets no DexConfig rather than an
+            # empty one, which would read like a builder that set nothing.
+            if entry is None:
+                dex = ""
+            else:
+                try:
+                    dex = entry["name"]
+                except (KeyError, TypeError) as exc:
+                    # Without the name there is nothing to request, so this
+                    # costs the DEX's instruments too. Separate from a config
+                    # that merely fails to parse, below.
+                    snapshot.errors.append(
+                        ObservationError(scope=f"perpDexs[{index}]", reason=str(exc))
+                    )
+                    continue
+                try:
+                    snapshot.dexes.append(read_config(entry))
+                except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                    # The market data is still worth having, and the error row
+                    # is what says its funding terms were unknown this pass —
+                    # better than dropping ~120 real observations over one
+                    # malformed multiplier, and better than filling the config
+                    # in from the last pass that happened to parse.
+                    snapshot.errors.append(
+                        ObservationError(scope=f"{dex} (config)", reason=str(exc))
+                    )
+
             try:
                 meta, ctxs = hl.meta_and_asset_ctxs(dex=dex)
             except HyperliquidError as exc:

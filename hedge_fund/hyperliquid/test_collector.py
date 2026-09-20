@@ -10,18 +10,43 @@ from hedge_fund.hyperliquid.collector import collect, read_as_of, save_snapshot
 from hedge_fund.hyperliquid.models import MarketSnapshot
 
 
-# A real POST https://api.hyperliquid.xyz/info response, captured 2026-09-20
+# Real POST https://api.hyperliquid.xyz/info responses, captured 2026-09-20
 # and trimmed to five instruments: a liquid native perp (BTC), a delisted
 # native one (MATIC), two live HIP-3 markets on the xyz DEX (an equity and a
 # COMEX-benchmarked metal), and a delisted HIP-3 market whose book is empty
 # (vntl:SPACEX — midPx and impactPxs null, which is what an empty book looks
-# like on this endpoint). Field names and string-typed numbers are the
+# like on this endpoint). The perpDexs entries are the real config for those
+# two builders, with the per-asset maps trimmed to the same instruments and
+# subDeployers to two actions. Field names and string-typed numbers are the
 # venue's own; nothing here is invented.
 CAPTURE = {
     "perpDexs": [
         None,
-        {"name": "xyz", "fullName": "XYZ"},
-        {"name": "vntl", "fullName": "Ventuals"},
+        {"name": "xyz", "fullName": "XYZ",
+         "deployer": "0x88806a71d74ad0a510b350545c9ae490912f0888",
+         "oracleUpdater": None,
+         "feeRecipient": "0x83ffcfb1f2ad843c474b2e28df86c721cb869d3a",
+         "assetToStreamingOiCap": [["xyz:GOLD", "750000000.0"], ["xyz:NVDA", "500000000.0"]],
+         "subDeployers": [
+             ["registerAsset", ["0x7d16f116d252db609c56d27d6c9605eb03e16657",
+                                "0x8c4190018486a2dbac2629d688136e8990170ff2"]],
+             ["setOracle", ["0x1234567890545d1df9ee64b35fdd16966e08acec"]],
+         ],
+         "assetToFundingMultiplier": [["xyz:GOLD", "0.5"], ["xyz:NVDA", "0.5"]],
+         "assetToFundingInterestRate": [],
+         "assetToFundingClamp": []},
+        {"name": "vntl", "fullName": "Ventuals",
+         "deployer": "0x8888888192a4a0593c13532ba48449fc24c3beda",
+         "oracleUpdater": None,
+         "feeRecipient": "0x5afe865300895b96d20132a8d9fa8e7829334b52",
+         "assetToStreamingOiCap": [["vntl:SPACEX", "10000000.0"]],
+         "subDeployers": [
+             ["registerAsset", ["0xdfc9f8b03664fb312c51ebf820eaefb6732f495a"]],
+             ["setOracle", ["0x0ac1e81a640f1492c286d71031af5af27a9b712e"]],
+         ],
+         "assetToFundingMultiplier": [["vntl:SPACEX", "0.0"]],
+         "assetToFundingInterestRate": [],
+         "assetToFundingClamp": []},
     ],
     "": [
         {"universe": [
@@ -42,9 +67,10 @@ CAPTURE = {
     "xyz": [
         {"universe": [
             {"szDecimals": 3, "name": "xyz:NVDA", "maxLeverage": 20, "marginTableId": 20,
-             "growthMode": "enabled", "deployerFeeScale": "1.0"},
+             "growthMode": "enabled", "deployerFeeScale": "1.0",
+             "lastFeeScaleChangeTime": "2025-11-23T17:37:10.033211662"},
             {"szDecimals": 4, "name": "xyz:GOLD", "maxLeverage": 25, "marginTableId": 25,
-             "deployerFeeScale": "1.0"},
+             "deployerFeeScale": "1.0", "lastFeeScaleChangeTime": "1970-01-01T00:00:00"},
         ]},
         [
             {"funding": "0.00000625", "openInterest": "638380.966", "prevDayPx": "222.25",
@@ -144,6 +170,79 @@ def test_empty_book_is_recorded_not_filtered():
 def test_listed_market_is_not_flagged_delisted():
     """isDelisted is absent, not false, on a live market."""
     assert collect(FakeClient()).observations[0].is_delisted is False
+
+
+def test_builder_config_is_recorded_once_per_pass():
+    snapshot = collect(FakeClient())
+
+    assert [d.name for d in snapshot.dexes] == ["xyz", "vntl"]
+    xyz = snapshot.dexes[0]
+    assert xyz.full_name == "XYZ"
+    assert xyz.deployer == "0x88806a71d74ad0a510b350545c9ae490912f0888"
+    assert xyz.fee_recipient == "0x83ffcfb1f2ad843c474b2e28df86c721cb869d3a"
+
+
+def test_native_book_gets_no_config_entry():
+    """The venue sends a literal null for its own book, not an empty config."""
+    snapshot = collect(FakeClient())
+
+    assert "" not in [d.name for d in snapshot.dexes]
+    assert len(snapshot.dexes) == 2
+    assert snapshot.errors == []
+
+
+def test_who_could_post_the_oracle_is_kept_even_when_oracle_updater_is_null():
+    """oracleUpdater is null on most DEXs; subDeployers.setOracle is not."""
+    xyz = collect(FakeClient()).dexes[0]
+
+    assert xyz.oracle_updater is None
+    assert xyz.sub_deployers["setOracle"] == ["0x1234567890545d1df9ee64b35fdd16966e08acec"]
+    assert len(xyz.sub_deployers["registerAsset"]) == 2
+
+
+def test_funding_inputs_and_oi_caps_join_to_instruments_by_name():
+    snapshot = collect(FakeClient())
+    xyz = snapshot.dexes[0]
+    nvda = next(o for o in snapshot.observations if o.instrument == "xyz:NVDA")
+
+    assert xyz.asset_to_funding_multiplier[nvda.instrument] == 0.5
+    assert xyz.asset_to_streaming_oi_cap[nvda.instrument] == 500000000.0
+    # Absent maps stay empty rather than being invented from a default.
+    assert xyz.asset_to_funding_interest_rate == {}
+    assert xyz.asset_to_funding_clamp == {}
+
+
+def test_per_instrument_builder_settings_are_recorded():
+    nvda = next(o for o in collect(FakeClient()).observations if o.instrument == "xyz:NVDA")
+
+    assert nvda.deployer_fee_scale == 1.0
+    assert nvda.growth_mode == "enabled"
+    assert nvda.margin_table_id == 20
+    # Kept as the venue's own naive string, not coerced to a UTC instant.
+    assert nvda.last_fee_scale_change_time == "2025-11-23T17:37:10.033211662"
+
+
+def test_unparseable_config_costs_the_config_not_the_market_data():
+    capture = json.loads(json.dumps(CAPTURE))
+    capture["perpDexs"][1]["assetToFundingMultiplier"] = [["xyz:NVDA", "not-a-number"]]
+
+    snapshot = collect(FakeClient(capture))
+
+    assert [d.name for d in snapshot.dexes] == ["vntl"]
+    assert "xyz:NVDA" in [o.instrument for o in snapshot.observations]
+    assert [e.scope for e in snapshot.errors] == ["xyz (config)"]
+
+
+def test_nameless_dex_entry_costs_its_instruments_too():
+    """Without a name there is nothing to request."""
+    capture = json.loads(json.dumps(CAPTURE))
+    del capture["perpDexs"][1]["name"]
+
+    snapshot = collect(FakeClient(capture))
+
+    assert [d.name for d in snapshot.dexes] == ["vntl"]
+    assert not [o for o in snapshot.observations if o.dex == "xyz"]
+    assert [e.scope for e in snapshot.errors] == ["perpDexs[1]"]
 
 
 def test_failed_dex_costs_only_its_own_instruments():
